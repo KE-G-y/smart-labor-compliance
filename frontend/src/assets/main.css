@@ -771,6 +771,7 @@ a {
 }
 
 .app-tooltip {
+  max-height: min(220px, calc(100vh - 24px));
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -780,6 +781,7 @@ a {
   font-size: 13px;
   line-height: 1.45;
   white-space: normal;
+  overflow: hidden;
   overflow-wrap: anywhere;
   pointer-events: none;
   text-align: left;
@@ -1408,6 +1410,66 @@ a {
 
 .preline {
   white-space: pre-line;
+}
+
+.markdown-content {
+  color: var(--text);
+  line-height: 1.75;
+}
+
+.markdown-content p,
+.markdown-content ol,
+.markdown-content ul,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5 {
+  margin: 0;
+}
+
+.markdown-content p {
+  min-width: 0;
+}
+
+.markdown-content strong {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.markdown-content em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.markdown-content ol,
+.markdown-content ul {
+  display: grid;
+  gap: 6px;
+  padding-left: 22px;
+}
+
+.markdown-content li {
+  min-width: 0;
+  padding-left: 2px;
+}
+
+.markdown-content code {
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.markdown-content a {
+  color: var(--primary);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.markdown-content a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 @media (max-width: 980px) {

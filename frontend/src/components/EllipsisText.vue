@@ -15,12 +15,12 @@
 
   <Teleport to="body">
     <div
-      v-if="visible && text"
+      v-if="visible && tooltipText"
       class="app-tooltip"
       data-app-tooltip="true"
       :style="tooltipStyle"
     >
-      {{ text }}
+      {{ tooltipText }}
     </div>
   </Teleport>
 </template>
@@ -36,6 +36,10 @@ const props = defineProps({
   asLink: {
     type: Boolean,
     default: false
+  },
+  tooltipMaxLength: {
+    type: Number,
+    default: 220
   }
 })
 
@@ -43,6 +47,14 @@ const textRef = ref(null)
 const visible = ref(false)
 const tooltipStyle = ref({})
 const text = computed(() => props.value === null || props.value === undefined ? '' : String(props.value))
+const normalizedTooltipMaxLength = computed(() => {
+  const value = Number(props.tooltipMaxLength)
+  return Number.isFinite(value) && value > 0 ? value : 220
+})
+const tooltipText = computed(() => {
+  if (text.value.length <= normalizedTooltipMaxLength.value) return text.value
+  return `${text.value.slice(0, normalizedTooltipMaxLength.value).trimEnd()}...`
+})
 
 const showTooltip = async () => {
   if (!text.value || !textRef.value) return
@@ -51,8 +63,8 @@ const showTooltip = async () => {
   const rect = el.getBoundingClientRect()
   const viewportPadding = 12
   const gap = 8
-  const maxWidth = Math.min(520, window.innerWidth - viewportPadding * 2)
-  const preferredWidth = Math.min(maxWidth, Math.max(120, Math.min(text.value.length * 13 + 28, 520)))
+  const maxWidth = Math.min(420, window.innerWidth - viewportPadding * 2)
+  const preferredWidth = Math.min(maxWidth, Math.max(120, Math.min(tooltipText.value.length * 12 + 28, maxWidth)))
 
   tooltipStyle.value = {
     position: 'fixed',

@@ -66,7 +66,7 @@
             </section>
             <section>
               <h3>{{ t('answer') }}</h3>
-              <p class="preline">{{ selectedLog.answer || '-' }}</p>
+              <div class="markdown-box markdown-content" v-html="renderMarkdown(selectedLog.answer || '-')"></div>
             </section>
             <section v-if="sourceList.length">
               <h3>{{ t('sourcesInfo') }}</h3>
@@ -103,6 +103,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { getLogDetail, getLogs } from '@/api'
 import { useI18n } from '@/i18n'
+import { renderMarkdown } from '@/utils/markdown'
 import { displayedRiskLevel } from '@/utils/risk'
 import AppPagination from '@/components/AppPagination.vue'
 import AppSelect from '@/components/AppSelect.vue'
@@ -198,12 +199,19 @@ onMounted(fetchLogs)
   font-size: 15px;
 }
 
-.log-detail p {
+.log-detail p,
+.markdown-box {
   margin: 0;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-soft);
+}
+
+.markdown-box {
+  display: grid;
+  gap: 8px;
+  overflow-wrap: anywhere;
 }
 
 .log-sources {

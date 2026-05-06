@@ -82,7 +82,7 @@
                 <span class="tag">{{ t('provider') }}: {{ provider }}</span>
               </div>
             </div>
-            <div class="answer-text preline">{{ answer }}</div>
+            <div class="answer-text markdown-content" v-html="renderedAnswer"></div>
 
             <div v-if="sources.length" class="subsection">
               <h3>{{ t('sources') }}</h3>
@@ -154,6 +154,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { chat, chatWithFile, getRecommendedQuestions, getTenantCode, getTenantPublic, setTenantCode, stopChatGeneration, submitFeedback } from '@/api'
 import { useI18n } from '@/i18n'
+import { renderMarkdown } from '@/utils/markdown'
 import { displayedRiskLevel as getDisplayedRiskLevel, normalizeRiskLevel, riskFromAnswer } from '@/utils/risk'
 import AppSelect from '@/components/AppSelect.vue'
 import AppTopbar from '@/components/AppTopbar.vue'
@@ -186,6 +187,7 @@ const stopping = ref(false)
 const LAST_CHAT_KEY = 'chat_last_state'
 
 const displayedRiskLevel = computed(() => getDisplayedRiskLevel({ answer: answer.value, risk_level: riskLevel.value }))
+const renderedAnswer = computed(() => renderMarkdown(answer.value))
 const riskText = computed(() => riskLabel(displayedRiskLevel.value))
 const riskClass = computed(() => displayedRiskLevel.value === 'high' ? 'danger' : displayedRiskLevel.value === 'medium' ? 'warning' : 'success')
 const userRoleOptions = computed(() => [
@@ -366,7 +368,9 @@ const submitQuestion = async () => {
   } catch (error) {
     answer.value = stopping.value || error.name === 'CanceledError' || error.code === 'ERR_CANCELED'
       ? t('generationStopped')
-      : error.response?.data?.message || t('systemError')
+      : error.code === 'ECONNABORTED'
+        ? t('requestTimeout')
+        : error.response?.data?.message || t('systemError')
     sources.value = []
     tasks.value = []
     answeredQuestion.value = submittedQuestion
@@ -662,6 +666,13 @@ watch(city, (value) => {
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.answer-text.markdown-content {
+  display: grid;
+  gap: 10px;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .subsection {

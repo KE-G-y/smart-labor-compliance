@@ -2,9 +2,11 @@ import axios from 'axios'
 
 export const DEFAULT_TENANT_CODE = 'demo-sx'
 
+const apiTimeout = Number(import.meta.env.VITE_API_TIMEOUT_MS || 90000)
+
 const api = axios.create({
   baseURL: '/api',
-  timeout: 45000,
+  timeout: Number.isFinite(apiTimeout) && apiTimeout > 0 ? apiTimeout : 90000,
   headers: {
     'Content-Type': 'application/json'
   }

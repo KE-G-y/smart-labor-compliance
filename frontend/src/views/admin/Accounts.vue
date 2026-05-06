@@ -9,7 +9,7 @@
             <button class="btn" @click="fetchAdmins">{{ t('refresh') }}</button>
           </div>
         </div>
-        <AppTable :columns="accountColumns" :rows="admins" :empty-text="t('noAccounts')" :sequence-start="sequenceStart">
+        <AppTable :columns="accountColumns" :rows="admins" :empty-text="t('noAccounts')" :loading="loading" :loading-text="t('loading')" :sequence-start="sequenceStart">
           <template #cell-role="{ row }">
             <EllipsisText :value="roleLabel(row.role, row.role_label)" />
           </template>
@@ -68,6 +68,7 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const createModalOpen = ref(false)
+const loading = ref(false)
 const defaultRole = () => roles.value.find(item => item.value === 'operator')?.value || roles.value[0]?.value || 'operator'
 const initialForm = () => ({ username: '', password: '', role: defaultRole(), display_name: '' })
 const form = ref(initialForm())
@@ -86,9 +87,14 @@ const roleOptions = computed(() => roles.value.map(role => ({
 })))
 
 const fetchAdmins = async () => {
-  const res = await getAdmins({ page: page.value, page_size: pageSize.value })
-  admins.value = res.data?.list || []
-  total.value = res.data?.total || 0
+  loading.value = true
+  try {
+    const res = await getAdmins({ page: page.value, page_size: pageSize.value })
+    admins.value = res.data?.list || []
+    total.value = res.data?.total || 0
+  } finally {
+    loading.value = false
+  }
 }
 const fetchRoles = async () => {
   const res = await getRoles()

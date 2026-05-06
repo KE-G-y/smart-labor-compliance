@@ -19,7 +19,7 @@
         <button class="btn" :disabled="!selectedIds.length" @click="batchSetStatus('disabled')">{{ t('batchDisable') }}</button>
         <button class="btn danger" :disabled="!selectedIds.length" @click="batchDeleteSelected">{{ t('batchDelete') }}</button>
       </div>
-      <AppTable :columns="packageColumns" :rows="packages" :empty-text="t('noPackages')" :sequence-start="sequenceStart">
+      <AppTable :columns="packageColumns" :rows="packages" :empty-text="t('noPackages')" :loading="loading" :loading-text="t('loading')" :sequence-start="sequenceStart">
         <template #head-select>
           <input type="checkbox" :aria-label="t('selectAll')" :checked="allSelected" @change="toggleSelectAll" />
         </template>
@@ -54,6 +54,7 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const selectedIds = ref([])
+const loading = ref(false)
 const permissions = JSON.parse(localStorage.getItem('admin_permissions') || '[]')
 const sequenceStart = computed(() => (page.value - 1) * pageSize.value + 1)
 const hasPermission = (permission, fallback) => permissions.includes(permission) || permissions.includes(fallback)
@@ -75,10 +76,15 @@ const packageColumns = computed(() => [
   { key: 'action', label: t('action'), width: '88px' }
 ])
 const fetchPackages = async () => {
-  const res = await getKnowledgePackages({ page: page.value, page_size: pageSize.value })
-  packages.value = res.data?.list || []
-  total.value = res.data?.total || 0
-  selectedIds.value = selectedIds.value.filter(id => packages.value.some(item => item.id === id))
+  loading.value = true
+  try {
+    const res = await getKnowledgePackages({ page: page.value, page_size: pageSize.value })
+    packages.value = res.data?.list || []
+    total.value = res.data?.total || 0
+    selectedIds.value = selectedIds.value.filter(id => packages.value.some(item => item.id === id))
+  } finally {
+    loading.value = false
+  }
 }
 const toggle = async (item) => {
   await updatePackageStatus(item.id, { status: item.status === 'active' ? 'disabled' : 'active' })

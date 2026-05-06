@@ -23,7 +23,7 @@
           <button class="btn" :disabled="!selectedIds.length" @click="batchSetRisk('medium')">{{ t('batchRiskMedium') }}</button>
           <button class="btn" :disabled="!selectedIds.length" @click="batchSetRisk('low')">{{ t('batchRiskLow') }}</button>
         </div>
-        <AppTable :columns="faqColumns" :rows="faqs" :empty-text="t('noFaqs')" :sequence-start="sequenceStart">
+        <AppTable :columns="faqColumns" :rows="faqs" :empty-text="t('noFaqs')" :loading="loading" :loading-text="t('loading')" :sequence-start="sequenceStart">
           <template #head-select>
             <input type="checkbox" :aria-label="t('selectAll')" :checked="allSelected" @change="toggleSelectAll" />
           </template>
@@ -90,6 +90,7 @@ const keywordText = ref('')
 const editingId = ref(null)
 const faqModalOpen = ref(false)
 const selectedIds = ref([])
+const loading = ref(false)
 const permissions = JSON.parse(localStorage.getItem('admin_permissions') || '[]')
 const initialForm = () => ({ question: '', answer: '', category: '', region: t('defaultRegion'), risk_level: 'medium', keywords: [] })
 const form = ref(initialForm())
@@ -116,10 +117,15 @@ const riskOptions = computed(() => [
 ])
 
 const fetchFaqs = async () => {
-  const res = await getFaqs({ keyword: keyword.value, page: page.value, page_size: pageSize.value })
-  faqs.value = res.data?.list || []
-  total.value = res.data?.total || 0
-  selectedIds.value = selectedIds.value.filter(id => faqs.value.some(item => item.id === id))
+  loading.value = true
+  try {
+    const res = await getFaqs({ keyword: keyword.value, page: page.value, page_size: pageSize.value })
+    faqs.value = res.data?.list || []
+    total.value = res.data?.total || 0
+    selectedIds.value = selectedIds.value.filter(id => faqs.value.some(item => item.id === id))
+  } finally {
+    loading.value = false
+  }
 }
 const queryFaqs = () => {
   page.value = 1

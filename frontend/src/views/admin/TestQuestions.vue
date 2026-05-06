@@ -5,7 +5,7 @@
         <h2>{{ t('testData') }}</h2>
         <button class="btn" @click="fetchTests">{{ t('refresh') }}</button>
       </div>
-      <AppTable :columns="testColumns" :rows="tests" :empty-text="t('noTests')" :sequence-start="sequenceStart">
+      <AppTable :columns="testColumns" :rows="tests" :empty-text="t('noTests')" :loading="loading" :loading-text="t('loading')" :sequence-start="sequenceStart">
         <template #cell-difficulty="{ row }">
           <span class="tag">{{ difficultyLabel(row.difficulty) }}</span>
         </template>
@@ -32,6 +32,7 @@ const tests = ref([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
+const loading = ref(false)
 const sequenceStart = computed(() => (page.value - 1) * pageSize.value + 1)
 const testColumns = computed(() => [
   { key: 'sequence', label: t('sequence'), width: '64px' },
@@ -41,9 +42,14 @@ const testColumns = computed(() => [
   { key: 'expected_points', label: t('expectedPoints'), width: '40%' }
 ])
 const fetchTests = async () => {
-  const res = await getTestQuestions({ page: page.value, page_size: pageSize.value })
-  tests.value = res.data?.list || []
-  total.value = res.data?.total || 0
+  loading.value = true
+  try {
+    const res = await getTestQuestions({ page: page.value, page_size: pageSize.value })
+    tests.value = res.data?.list || []
+    total.value = res.data?.total || 0
+  } finally {
+    loading.value = false
+  }
 }
 onMounted(fetchTests)
 </script>

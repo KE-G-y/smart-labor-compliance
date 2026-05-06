@@ -16,6 +16,7 @@ DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "infini_rag_flow")
+API_STARTUP_TIMEOUT_SECONDS = int(os.getenv("API_STARTUP_TIMEOUT_SECONDS", "90"))
 
 if "test" not in TEST_DB_NAME.lower():
     raise RuntimeError("Refusing to run destructive test setup without a test database name.")
@@ -94,7 +95,7 @@ def api_base_url():
     )
     base_url = f"http://127.0.0.1:{port}"
     try:
-        deadline = time.time() + 45
+        deadline = time.time() + API_STARTUP_TIMEOUT_SECONDS
         last_error = ""
         while time.time() < deadline:
             if process.poll() is not None:
@@ -167,4 +168,3 @@ def tenant_headers(api_base_url):
 
 def unique(prefix: str) -> str:
     return f"{prefix}-{int(time.time() * 1000)}"
-

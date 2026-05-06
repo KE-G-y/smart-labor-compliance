@@ -21,7 +21,7 @@
           <button class="btn" :disabled="!selectedIds.length" @click="batchMarkPending">{{ t('batchMarkPending') }}</button>
           <button class="btn danger" :disabled="!selectedIds.length" @click="batchDeleteSelected">{{ t('batchDelete') }}</button>
         </div>
-        <AppTable :columns="sourceColumns" :rows="sources" :empty-text="t('noSources')" :sequence-start="sequenceStart">
+        <AppTable :columns="sourceColumns" :rows="sources" :empty-text="t('noSources')" :loading="loading" :loading-text="t('loading')" :sequence-start="sequenceStart">
           <template #head-select>
             <input type="checkbox" :aria-label="t('selectAll')" :checked="allSelected" @change="toggleSelectAll" />
           </template>
@@ -230,6 +230,7 @@ const sourceMode = ref('link')
 const selectedFile = ref(null)
 const uploadedFileName = ref('')
 const uploading = ref(false)
+const loading = ref(false)
 const formError = ref('')
 const initialForm = () => ({ title: '', url: '', local_file: '', doc_type: '', issuer: '', region: t('defaultRegion'), description: '', validity_status: '有效', review_status: '待人工复核' })
 const form = ref(initialForm())
@@ -286,10 +287,15 @@ const uploadStatusText = computed(() => {
 })
 
 const fetchSources = async () => {
-  const res = await getSources({ page: page.value, page_size: pageSize.value })
-  sources.value = res.data?.list || []
-  total.value = res.data?.total || 0
-  selectedIds.value = selectedIds.value.filter(id => sources.value.some(item => item.id === id))
+  loading.value = true
+  try {
+    const res = await getSources({ page: page.value, page_size: pageSize.value })
+    sources.value = res.data?.list || []
+    total.value = res.data?.total || 0
+    selectedIds.value = selectedIds.value.filter(id => sources.value.some(item => item.id === id))
+  } finally {
+    loading.value = false
+  }
 }
 const openCreateModal = () => {
   resetForm()

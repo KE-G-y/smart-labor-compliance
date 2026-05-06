@@ -110,6 +110,8 @@ npm run dev
 - 本机 Dify + RAGFlow 检索链路可能超过 30 秒，建议在 `.env` 中设置 `DIFY_TIMEOUT_SECONDS=60`
 - 未配置 Dify API Key 或调用失败时，系统使用本租户 FAQ 和来源目录生成兜底回答
 - RAGFlow 当前作为知识库建设和资料整理辅助服务，后台记录 Web/API 地址与数据集映射字段
+- 用户端“补充信息”会向 Dify 传入 `user_goal`、`urgency_level`、`output_format`、`known_facts`、`verification_focus` 和 `answer_style`，用于稳定分类、检索和回答格式；这些字段同样会进入本地 FAQ 兜底前缀，便于人工复核上下文。
+- 当前增强版 Dify DSL 文件为 `/Users/yaoyao/Desktop/企业用工与社保合规智能助手.yml`，导入 Dify 后需确认开始节点变量与 `docs/DIFY_RAGFLOW_GUIDE.md` 的输入表一致。
 - 如果 Dify 以 Docker 容器运行并需要访问宿主机上的 RAGFlow，不要在 Dify 外部知识库 API 中使用本机临时局域网 IP。建议配置为 `http://host.docker.internal:8880/api/v1/dify`，否则容器内检索节点可能访问超时，后端会回退到本地 FAQ。
 
 Dify 工作流建议输出结构：

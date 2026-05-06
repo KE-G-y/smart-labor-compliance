@@ -9,7 +9,7 @@
             <button class="btn" @click="fetchTenants">{{ t('refresh') }}</button>
           </div>
         </div>
-        <AppTable :columns="tenantColumns" :rows="tenants" :empty-text="t('noTenants')" :sequence-start="sequenceStart">
+        <AppTable :columns="tenantColumns" :rows="tenants" :empty-text="t('noTenants')" :loading="loading" :loading-text="t('loading')" :sequence-start="sequenceStart">
           <template #cell-status="{ row }">
             <span :class="['tag', row.status === 'active' ? 'success' : 'warning']">{{ statusLabel(row.status) || row.status }}</span>
           </template>
@@ -67,6 +67,7 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const createModalOpen = ref(false)
+const loading = ref(false)
 const sequenceStart = computed(() => (page.value - 1) * pageSize.value + 1)
 const tenantColumns = computed(() => [
   { key: 'sequence', label: t('sequence'), width: '64px' },
@@ -81,9 +82,14 @@ const initialForm = () => ({ code: '', name: '', industry: '', region: t('defaul
 const form = ref(initialForm())
 
 const fetchTenants = async () => {
-  const res = await getTenants({ page: page.value, page_size: pageSize.value })
-  tenants.value = res.data?.list || []
-  total.value = res.data?.total || 0
+  loading.value = true
+  try {
+    const res = await getTenants({ page: page.value, page_size: pageSize.value })
+    tenants.value = res.data?.list || []
+    total.value = res.data?.total || 0
+  } finally {
+    loading.value = false
+  }
 }
 
 const openCreateModal = () => {

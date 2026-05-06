@@ -15,7 +15,7 @@ from sqlalchemy import desc, func, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db, settings
-from app.dependencies import get_admin_tenant_filter, get_current_admin, normalize_pagination
+from app.dependencies import get_admin_tenant_filter, get_current_admin, normalize_pagination, order_by_newest
 from app.models import Admin, ChatLog, FAQ, Feedback, KnowledgePackage, Source, Tenant, TestQuestion
 from app.response import ok, page as page_response
 from app.schemas.admin import AdminCreate, AdminLogin, AdminToken, AdminUpdate, TenantCreate, TenantUpdate
@@ -417,7 +417,7 @@ async def get_tenants(
     if status:
         query = query.filter(Tenant.status == status)
     total = query.count()
-    tenants = query.order_by(Tenant.id.asc()).offset((page - 1) * page_size).limit(page_size).all()
+    tenants = order_by_newest(query, Tenant).offset((page - 1) * page_size).limit(page_size).all()
     return page_response([_serialize_tenant(item) for item in tenants], total, page, page_size)
 
 
@@ -498,7 +498,7 @@ async def get_admins(
     else:
         query = query.filter(Admin.tenant_id == current_admin["tenant_id"], Admin.role != "super_admin")
     total = query.count()
-    admins = query.order_by(Admin.id.asc()).offset((page - 1) * page_size).limit(page_size).all()
+    admins = order_by_newest(query, Admin).offset((page - 1) * page_size).limit(page_size).all()
     return page_response([_serialize_admin(item) for item in admins], total, page, page_size)
 
 
@@ -616,7 +616,7 @@ async def get_logs(
     if end_date:
         query = query.filter(ChatLog.created_at < datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1))
     total = query.count()
-    logs = query.order_by(ChatLog.id.asc()).offset((page - 1) * page_size).limit(page_size).all()
+    logs = order_by_newest(query, ChatLog).offset((page - 1) * page_size).limit(page_size).all()
     return page_response(
         [
             {
@@ -690,7 +690,7 @@ async def get_faqs(
     if keyword:
         query = query.filter(or_(FAQ.question.contains(keyword), FAQ.faq_code.contains(keyword)))
     total = query.count()
-    items = query.order_by(FAQ.id.asc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = order_by_newest(query, FAQ).offset((page - 1) * page_size).limit(page_size).all()
     return page_response(items, total, page, page_size)
 
 
@@ -722,7 +722,7 @@ async def export_faqs(
             "language": item.language,
             "effective_date": item.effective_date,
         }
-        for item in query.order_by(FAQ.id.asc()).all()
+        for item in order_by_newest(query, FAQ).all()
     ]
     return _csv_text_response("faqs.csv", rows, FAQ_EXPORT_FIELDS)
 
@@ -901,7 +901,7 @@ async def get_sources(
     if keyword:
         query = query.filter(or_(Source.title.contains(keyword), Source.source_code.contains(keyword), Source.url.contains(keyword)))
     total = query.count()
-    items = query.order_by(Source.id.asc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = order_by_newest(query, Source).offset((page - 1) * page_size).limit(page_size).all()
     return page_response(items, total, page, page_size)
 
 
@@ -939,7 +939,7 @@ async def export_sources(
             "local_file": item.local_file,
             "description": item.description,
         }
-        for item in query.order_by(Source.id.asc()).all()
+        for item in order_by_newest(query, Source).all()
     ]
     return _csv_text_response("sources.csv", rows, SOURCE_EXPORT_FIELDS)
 
@@ -1183,7 +1183,7 @@ async def get_knowledge_packages(
     if status:
         query = query.filter(KnowledgePackage.status == status)
     total = query.count()
-    packages = query.order_by(KnowledgePackage.id.asc()).offset((page - 1) * page_size).limit(page_size).all()
+    packages = order_by_newest(query, KnowledgePackage).offset((page - 1) * page_size).limit(page_size).all()
     data = []
     for pkg in packages:
         data.append(
@@ -1233,7 +1233,7 @@ async def export_knowledge_packages(
             "dify_dataset_id": item.dify_dataset_id,
             "ragflow_dataset_id": item.ragflow_dataset_id,
         }
-        for item in query.order_by(KnowledgePackage.id.asc()).all()
+        for item in order_by_newest(query, KnowledgePackage).all()
     ]
     return _csv_text_response("knowledge-packages.csv", rows, PACKAGE_EXPORT_FIELDS)
 
@@ -1349,7 +1349,7 @@ async def get_test_questions(
     if category:
         query = query.filter(TestQuestion.category == category)
     total = query.count()
-    items = query.order_by(TestQuestion.id.asc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = order_by_newest(query, TestQuestion).offset((page - 1) * page_size).limit(page_size).all()
     return page_response(items, total, page, page_size)
 
 

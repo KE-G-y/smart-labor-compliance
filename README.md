@@ -49,7 +49,10 @@
 ./scripts/start_project.sh
 ```
 
-访问 `http://localhost:3000`。停止项目：
+访问 `http://localhost:3000`
+
+
+停止项目：
 
 ```bash
 ./scripts/stop_project.sh

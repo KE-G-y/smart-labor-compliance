@@ -36,6 +36,23 @@ USER_ROLE_LABELS = {
     "admin_user": "管理员",
 }
 
+DEFAULT_ANSWER_STYLE = "结构清晰、结论先行、引用来源、明确风险等级和待核验项"
+CONTEXT_FIELD_LIMITS = {
+    "answer_style": 600,
+    "user_goal": 160,
+    "urgency_level": 80,
+    "output_format": 120,
+    "known_facts": 1000,
+    "verification_focus": 600,
+}
+CONTEXT_FIELD_LABELS = {
+    "user_goal": "问题目标",
+    "urgency_level": "紧急程度",
+    "output_format": "输出格式",
+    "known_facts": "已知事实",
+    "verification_focus": "重点核验",
+}
+
 
 _generation_tasks: dict[str, dict[str, str]] = {}
 _generation_tasks_lock = threading.Lock()
@@ -68,12 +85,32 @@ class ComplianceAnswerService:
         city: str = "西安市",
         attachment: Optional[ChatAttachment] = None,
         generation_id: Optional[str] = None,
+        answer_style: Optional[str] = None,
+        user_goal: Optional[str] = None,
+        urgency_level: Optional[str] = None,
+        output_format: Optional[str] = None,
+        known_facts: Optional[str] = None,
+        verification_focus: Optional[str] = None,
     ) -> ChatResponse:
         question = sanitize_text(question) or ""
+        context = self._normalize_context(
+            answer_style=answer_style,
+            user_goal=user_goal,
+            urgency_level=urgency_level,
+            output_format=output_format,
+            known_facts=known_facts,
+            verification_focus=verification_focus,
+        )
         start_time = int(time.time() * 1000)
         if not self._has_active_package():
             response = ChatResponse(
-                answer=self._with_context_prefix(self._inactive_package_answer(question), user_role, province, city),
+                answer=self._with_context_prefix(
+                    self._inactive_package_answer(question),
+                    user_role,
+                    province,
+                    city,
+                    context,
+                ),
                 sources=None,
                 related_tasks=[],
                 response_time=int(time.time() * 1000) - start_time,
@@ -98,6 +135,7 @@ class ComplianceAnswerService:
                 city,
                 attachment,
                 generation_id,
+                context,
             )
             if dify_response:
                 dify_response.response_time = int(time.time() * 1000) - start_time
@@ -111,6 +149,7 @@ class ComplianceAnswerService:
                     user_role,
                     province,
                     city,
+                    context,
                 ),
                 sources=None,
                 related_tasks=[],
@@ -122,7 +161,7 @@ class ComplianceAnswerService:
             )
 
         local_response = self._answer_from_faq(question, language)
-        local_response.answer = self._with_context_prefix(local_response.answer, user_role, province, city)
+        local_response.answer = self._with_context_prefix(local_response.answer, user_role, province, city, context)
         local_response.response_time = int(time.time() * 1000) - start_time
         return local_response
 
@@ -137,22 +176,14 @@ class ComplianceAnswerService:
         city: str,
         attachment: Optional[ChatAttachment] = None,
         generation_id: Optional[str] = None,
+        context: Optional[dict[str, str]] = None,
     ) -> Optional[ChatResponse]:
         try:
-            region = f"{province}{city}" if province and city else (province or city or self.tenant.region)
             payload = {
                 "query": question,
                 "user": user_id or "anonymous",
                 "response_mode": "streaming",
-                "inputs": {
-                    "tenant_code": self.tenant.code,
-                    "tenant_name": self.tenant.name,
-                    "region": region,
-                    "province": province,
-                    "city": city,
-                    "user_role": USER_ROLE_LABELS.get(user_role, user_role),
-                    "answer_style": "结构清晰、结论先行、引用来源、明确风险等级和待核验项",
-                },
+                "inputs": self._build_dify_inputs(user_role, province, city, context),
             }
             if conversation_id:
                 payload["conversation_id"] = conversation_id
@@ -369,7 +400,22 @@ class ComplianceAnswerService:
             return "audio"
         if content_type.startswith("video/"):
             return "video"
-        if suffix in {"pdf", "txt", "md", "markdown", "html", "htm", "csv", "doc", "docx", "xls", "xlsx", "ppt", "pptx"}:
+        if suffix in {
+            "pdf",
+            "txt",
+            "md",
+            "markdown",
+            "html",
+            "htm",
+            "csv",
+            "doc",
+            "docx",
+            "xls",
+            "xlsx",
+            "ppt",
+            "pptx",
+            "rtf",
+        }:
             return "document"
         return "custom"
 
@@ -473,10 +519,71 @@ class ComplianceAnswerService:
             answer = f"{answer.strip()}\n\n风险提示：{DISCLAIMER}"
         return answer
 
-    def _with_context_prefix(self, answer: str, user_role: str, province: str, city: str) -> str:
+    def _normalize_context(
+        self,
+        *,
+        answer_style: Optional[str] = None,
+        user_goal: Optional[str] = None,
+        urgency_level: Optional[str] = None,
+        output_format: Optional[str] = None,
+        known_facts: Optional[str] = None,
+        verification_focus: Optional[str] = None,
+    ) -> dict[str, str]:
+        raw_context = {
+            "answer_style": answer_style,
+            "user_goal": user_goal,
+            "urgency_level": urgency_level,
+            "output_format": output_format,
+            "known_facts": known_facts,
+            "verification_focus": verification_focus,
+        }
+        context: dict[str, str] = {}
+        for key, value in raw_context.items():
+            cleaned = sanitize_text(value) if value is not None else ""
+            cleaned = (cleaned or "").strip()
+            if key == "answer_style" and not cleaned:
+                cleaned = DEFAULT_ANSWER_STYLE
+            limit = CONTEXT_FIELD_LIMITS[key]
+            if cleaned:
+                context[key] = cleaned[:limit]
+        return context
+
+    def _build_dify_inputs(
+        self,
+        user_role: str,
+        province: str,
+        city: str,
+        context: Optional[dict[str, str]] = None,
+    ) -> dict[str, str]:
+        region = f"{province}{city}" if province and city else (province or city or self.tenant.region)
+        inputs = {
+            "tenant_code": self.tenant.code,
+            "tenant_name": self.tenant.name,
+            "region": region,
+            "province": province,
+            "city": city,
+            "user_role": USER_ROLE_LABELS.get(user_role, user_role),
+            "answer_style": DEFAULT_ANSWER_STYLE,
+        }
+        inputs.update(context or {})
+        return inputs
+
+    def _with_context_prefix(
+        self,
+        answer: str,
+        user_role: str,
+        province: str,
+        city: str,
+        context: Optional[dict[str, str]] = None,
+    ) -> str:
         role = USER_ROLE_LABELS.get(user_role, user_role or "员工")
         region = f"{province}{city}" if province and city else (province or city or self.tenant.region)
-        return f"适用角色：{role}\n所在地区：{region}\n\n{answer}"
+        lines = [f"适用角色：{role}", f"所在地区：{region}"]
+        for key in ("user_goal", "urgency_level", "output_format", "known_facts", "verification_focus"):
+            value = (context or {}).get(key)
+            if value:
+                lines.append(f"{CONTEXT_FIELD_LABELS[key]}：{value}")
+        return f"{chr(10).join(lines)}\n\n{answer}"
 
     def _has_active_package(self) -> bool:
         return (

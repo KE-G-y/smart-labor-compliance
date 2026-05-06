@@ -16,6 +16,12 @@ class ChatRequest(BaseModel):
     user_role: str = "employee"
     province: str = "陕西省"
     city: str = "西安市"
+    answer_style: Optional[str] = Field(default=None, max_length=600)
+    user_goal: Optional[str] = Field(default=None, max_length=160)
+    urgency_level: Optional[str] = Field(default=None, max_length=80)
+    output_format: Optional[str] = Field(default=None, max_length=120)
+    known_facts: Optional[str] = Field(default=None, max_length=1000)
+    verification_focus: Optional[str] = Field(default=None, max_length=600)
 
 
 class ChatStopRequest(BaseModel):

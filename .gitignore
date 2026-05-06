@@ -16,6 +16,7 @@ logs/
 
 # Runtime files
 .run/
+backend/storage/
 
 # Temporary files
 *.tmp

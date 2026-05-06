@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_admin_tenant_filter, get_current_admin, get_public_tenant, normalize_pagination
+from app.dependencies import get_admin_tenant_filter, get_current_admin, get_public_tenant, normalize_pagination, order_by_newest
 from app.models import ChatLog, Feedback, Tenant
 from app.response import ok, page as page_response
 from app.schemas.feedback import FeedbackCreate, FeedbackUpdate
@@ -69,7 +69,7 @@ async def get_feedbacks(
     if is_helpful is not None:
         query = query.filter(Feedback.is_helpful.is_(is_helpful))
     total = query.count()
-    items = query.order_by(Feedback.id.asc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = order_by_newest(query, Feedback).offset((page - 1) * page_size).limit(page_size).all()
     data = [
         {
             "id": item.id,

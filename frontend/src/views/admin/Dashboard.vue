@@ -2,24 +2,30 @@
   <AdminLayout :title="t('dashboardTitle')" :subtitle="t('dashboardSubtitle')">
     <div class="grid">
       <div class="stat-grid">
-        <div class="stat"><span>{{ t('totalQuestions') }}</span><strong>{{ stats.total_questions || 0 }}</strong></div>
-        <div class="stat"><span>{{ t('todayQuestions') }}</span><strong>{{ stats.today_questions || 0 }}</strong></div>
-        <div class="stat"><span>{{ t('helpfulRate') }}</span><strong>{{ stats.helpful_rate || 0 }}%</strong></div>
-        <div class="stat"><span>{{ t('avgResponse') }}</span><strong>{{ stats.avg_response_time || 0 }}ms</strong></div>
+        <div class="stat"><span>{{ t('totalQuestions') }}</span><strong>{{ loading ? '-' : stats.total_questions || 0 }}</strong></div>
+        <div class="stat"><span>{{ t('todayQuestions') }}</span><strong>{{ loading ? '-' : stats.today_questions || 0 }}</strong></div>
+        <div class="stat"><span>{{ t('helpfulRate') }}</span><strong>{{ loading ? '-' : `${stats.helpful_rate || 0}%` }}</strong></div>
+        <div class="stat"><span>{{ t('avgResponse') }}</span><strong>{{ loading ? '-' : `${stats.avg_response_time || 0}ms` }}</strong></div>
       </div>
 
       <div class="dashboard-grid">
         <section class="panel">
           <div class="section-title">
             <h2>{{ t('serviceStatus') }}</h2>
-            <button class="btn" @click="fetchStats">{{ t('refresh') }}</button>
+            <button class="btn" :disabled="loading" @click="fetchStats">{{ t('refresh') }}</button>
           </div>
           <div class="grid">
-            <div class="service-row">
+            <div v-if="loading" class="service-row service-loading-row">
+              <div class="app-table-loading" role="status" aria-live="polite">
+                <span class="app-table-spinner" aria-hidden="true"></span>
+                <span>{{ t('loading') }}</span>
+              </div>
+            </div>
+            <div v-else class="service-row">
               <strong>MySQL Docker</strong>
               <span class="tag success">connected</span>
             </div>
-            <div v-for="(service, key) in services" :key="key" class="service-row">
+            <div v-for="(service, key) in services" v-show="!loading" :key="key" class="service-row">
               <div>
                 <strong>{{ service.name }}</strong>
                 <div class="muted">{{ service.url }}</div>
@@ -39,6 +45,8 @@
             :columns="topQuestionColumns"
             :rows="topQuestionRows"
             :empty-text="t('noData')"
+            :loading="loading"
+            :loading-text="t('loading')"
             :row-key="row => row.question"
             dense
           />
@@ -58,6 +66,7 @@ import AdminLayout from './AdminLayout.vue'
 const { t } = useI18n()
 const stats = ref({})
 const services = ref({})
+const loading = ref(false)
 const topQuestionRows = computed(() => (stats.value.top_questions || []).map((item, index) => ({
   ...item,
   rank: index + 1
@@ -69,9 +78,14 @@ const topQuestionColumns = computed(() => [
 ])
 
 const fetchStats = async () => {
-  const res = await getStatistics()
-  stats.value = res.data || {}
-  services.value = stats.value.services || {}
+  loading.value = true
+  try {
+    const res = await getStatistics()
+    stats.value = res.data || {}
+    services.value = stats.value.services || {}
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(fetchStats)
@@ -86,6 +100,10 @@ onMounted(fetchStats)
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.service-loading-row {
+  justify-content: center;
 }
 
 .dashboard-grid {

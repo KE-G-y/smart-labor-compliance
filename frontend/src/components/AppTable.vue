@@ -25,29 +25,39 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-if="!rows.length">
-          <td class="app-table-empty" :colspan="resolvedColumns.length">{{ emptyText }}</td>
-        </tr>
-        <tr v-for="(row, index) in rows" :key="getRowKey(row, index)">
-          <td
-            v-for="column in resolvedColumns"
-            :key="column.key"
-            :class="cellClass(column, 'body')"
-            :style="stickyStyle(column)"
-          >
-            <div class="app-table-cell" :class="alignClass(column.align)">
-              <slot
-                :name="`cell-${column.key}`"
-                :row="row"
-                :value="getCellValue(row, column, index)"
-                :index="index"
-                :column="column"
-              >
-                <EllipsisText :value="formatValue(getCellValue(row, column, index))" />
-              </slot>
+        <tr v-if="loading">
+          <td class="app-table-empty" :colspan="resolvedColumns.length">
+            <div class="app-table-loading" role="status" aria-live="polite">
+              <span class="app-table-spinner" aria-hidden="true"></span>
+              <span>{{ loadingText }}</span>
             </div>
           </td>
         </tr>
+        <tr v-else-if="!rows.length">
+          <td class="app-table-empty" :colspan="resolvedColumns.length">{{ emptyText }}</td>
+        </tr>
+        <template v-else>
+          <tr v-for="(row, index) in rows" :key="getRowKey(row, index)">
+            <td
+              v-for="column in resolvedColumns"
+              :key="column.key"
+              :class="cellClass(column, 'body')"
+              :style="stickyStyle(column)"
+            >
+              <div class="app-table-cell" :class="alignClass(column.align)">
+                <slot
+                  :name="`cell-${column.key}`"
+                  :row="row"
+                  :value="getCellValue(row, column, index)"
+                  :index="index"
+                  :column="column"
+                >
+                  <EllipsisText :value="formatValue(getCellValue(row, column, index))" />
+                </slot>
+              </div>
+            </td>
+          </tr>
+        </template>
       </tbody>
     </table>
   </div>
@@ -71,6 +81,14 @@ const props = defineProps({
     default: 'id'
   },
   emptyText: {
+    type: String,
+    default: ''
+  },
+  loading: {
+    type: Boolean,
+    default: false
+  },
+  loadingText: {
     type: String,
     default: ''
   },

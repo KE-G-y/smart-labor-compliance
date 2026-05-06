@@ -5,7 +5,7 @@
         <AppSelect v-model="status" style="width: 150px" :options="statusOptions" />
         <button class="btn primary" @click="queryFeedbacks">{{ t('query') }}</button>
       </div>
-      <AppTable :columns="feedbackColumns" :rows="feedbacks" :empty-text="t('noFeedbacks')" :sequence-start="sequenceStart">
+      <AppTable :columns="feedbackColumns" :rows="feedbacks" :empty-text="t('noFeedbacks')" :loading="loading" :loading-text="t('loading')" :sequence-start="sequenceStart">
         <template #cell-is_helpful="{ row }">
           <span :class="['tag', row.is_helpful ? 'success' : 'danger']">{{ row.is_helpful ? t('helpful') : t('notHelpful') }}</span>
         </template>
@@ -37,6 +37,7 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const status = ref('')
+const loading = ref(false)
 const sequenceStart = computed(() => (page.value - 1) * pageSize.value + 1)
 const feedbackColumns = computed(() => [
   { key: 'sequence', label: t('sequence'), width: '64px' },
@@ -58,9 +59,14 @@ const statusOptions = computed(() => [
 ])
 
 const fetchFeedbacks = async () => {
-  const res = await getFeedbacks({ status: status.value, page: page.value, page_size: pageSize.value })
-  feedbacks.value = res.data?.list || []
-  total.value = res.data?.total || 0
+  loading.value = true
+  try {
+    const res = await getFeedbacks({ status: status.value, page: page.value, page_size: pageSize.value })
+    feedbacks.value = res.data?.list || []
+    total.value = res.data?.total || 0
+  } finally {
+    loading.value = false
+  }
 }
 const queryFeedbacks = () => {
   page.value = 1

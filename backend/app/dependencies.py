@@ -73,3 +73,15 @@ def normalize_pagination(page: int, page_size: int) -> tuple[int, int]:
     page = max(1, page)
     page_size = min(max(1, page_size), 100)
     return page, page_size
+
+
+def order_by_newest(query, model):
+    """Order list queries by newest created record first with a stable id tie-breaker."""
+    order_columns = []
+    created_at = getattr(model, "created_at", None)
+    id_column = getattr(model, "id", None)
+    if created_at is not None:
+        order_columns.append(created_at.desc())
+    if id_column is not None:
+        order_columns.append(id_column.desc())
+    return query.order_by(*order_columns) if order_columns else query

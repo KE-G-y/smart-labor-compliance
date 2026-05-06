@@ -154,3 +154,45 @@ def test_dify_answer_risk_level_takes_precedence_over_question_estimate(api_base
         assert service._risk_from_answer("风险等级：高\n\n结论：公司拖欠工资属于严重风险。") == "high"
         assert service._risk_from_answer("初步风险等级为：中风险。建议复核。") == "medium"
         assert service._risk_from_answer("风险等级：low") == "low"
+
+
+def test_dify_context_inputs_match_enhanced_workflow(api_base_url):
+    import os
+
+    os.environ["DB_NAME"] = "employment_slc_auto_test"
+    from app.database import SessionLocal
+    from app.models import Tenant
+    from app.services.dify_service import ComplianceAnswerService
+
+    with SessionLocal() as db:
+        tenant = db.query(Tenant).filter(Tenant.code == "demo-sx").first()
+        service = ComplianceAnswerService(db, tenant)
+
+        context = service._normalize_context(
+            answer_style="按清单输出，标注待核验项",
+            user_goal="风险评估",
+            urgency_level="今天需要处理",
+            output_format="表格 + 结论",
+            known_facts="员工已离职 30 天，企业未办理社保减员",
+            verification_focus="西安市社保补缴口径",
+        )
+        inputs = service._build_dify_inputs("enterprise_hr", "陕西省", "西安市", context)
+
+        assert inputs["tenant_code"] == "demo-sx"
+        assert inputs["tenant_name"] == tenant.name
+        assert inputs["region"] == "陕西省西安市"
+        assert inputs["user_role"] == "企业HR"
+        assert inputs["answer_style"] == "按清单输出，标注待核验项"
+        assert inputs["user_goal"] == "风险评估"
+        assert inputs["urgency_level"] == "今天需要处理"
+        assert inputs["output_format"] == "表格 + 结论"
+        assert inputs["known_facts"] == "员工已离职 30 天，企业未办理社保减员"
+        assert inputs["verification_focus"] == "西安市社保补缴口径"
+
+        prefix = service._with_context_prefix("回答正文", "enterprise_hr", "陕西省", "西安市", context)
+        assert "适用角色：企业HR" in prefix
+        assert "问题目标：风险评估" in prefix
+        assert "重点核验：西安市社保补缴口径" in prefix
+        assert "回答正文" in prefix
+        assert service._dify_file_type("政策材料.rtf", "application/rtf") == "document"
+        assert service._normalize_context()["answer_style"] == "结构清晰、结论先行、引用来源、明确风险等级和待核验项"

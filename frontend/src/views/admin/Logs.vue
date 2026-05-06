@@ -6,7 +6,7 @@
         <AppSelect v-model="status" style="width: 140px" :options="statusOptions" />
         <button class="btn primary" @click="queryLogs">{{ t('query') }}</button>
       </div>
-      <AppTable :columns="logColumns" :rows="logs" :empty-text="t('noLogs')" :sequence-start="sequenceStart">
+      <AppTable :columns="logColumns" :rows="logs" :empty-text="t('noLogs')" :loading="loading" :loading-text="t('loading')" :sequence-start="sequenceStart">
         <template #cell-risk_level="{ row }">
           <span :class="['tag', riskClass(displayedRiskLevel(row))]">{{ riskLabel(displayedRiskLevel(row)) }}</span>
         </template>
@@ -120,6 +120,7 @@ const keyword = ref('')
 const status = ref('')
 const selectedLog = ref(null)
 const detailModalOpen = ref(false)
+const loading = ref(false)
 const sequenceStart = computed(() => (page.value - 1) * pageSize.value + 1)
 const logColumns = computed(() => [
   { key: 'sequence', label: t('sequence'), width: '64px', sticky: true },
@@ -140,9 +141,14 @@ const statusOptions = computed(() => [
 ])
 
 const fetchLogs = async () => {
-  const res = await getLogs({ keyword: keyword.value, status: status.value, page: page.value, page_size: pageSize.value })
-  logs.value = res.data?.list || []
-  total.value = res.data?.total || 0
+  loading.value = true
+  try {
+    const res = await getLogs({ keyword: keyword.value, status: status.value, page: page.value, page_size: pageSize.value })
+    logs.value = res.data?.list || []
+    total.value = res.data?.total || 0
+  } finally {
+    loading.value = false
+  }
 }
 const queryLogs = () => {
   page.value = 1

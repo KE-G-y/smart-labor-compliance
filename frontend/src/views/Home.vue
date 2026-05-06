@@ -33,6 +33,44 @@
             </div>
             <span v-else class="muted">{{ t('chatFileHint') }}</span>
           </div>
+          <div class="context-panel">
+            <button
+              class="context-toggle"
+              type="button"
+              :aria-expanded="contextOpen"
+              :disabled="loading"
+              @click="contextOpen = !contextOpen"
+            >
+              <span>{{ t('contextPanelTitle') }}</span>
+              <span class="context-toggle-state">{{ contextOpen ? t('contextPanelClose') : t('contextPanelOpen') }}</span>
+            </button>
+            <div v-show="contextOpen" class="context-grid">
+              <label class="context-field">
+                <span>{{ t('userGoal') }}</span>
+                <AppSelect v-model="userGoal" :options="userGoalOptions" :disabled="loading" />
+              </label>
+              <label class="context-field">
+                <span>{{ t('urgencyLevel') }}</span>
+                <AppSelect v-model="urgencyLevel" :options="urgencyOptions" :disabled="loading" />
+              </label>
+              <label class="context-field">
+                <span>{{ t('outputFormat') }}</span>
+                <AppSelect v-model="outputFormat" :options="outputFormatOptions" :disabled="loading" />
+              </label>
+              <label class="context-field">
+                <span>{{ t('answerStyle') }}</span>
+                <input v-model="answerStyle" class="input" :placeholder="t('answerStylePlaceholder')" :disabled="loading" />
+              </label>
+              <label class="context-field context-field-wide">
+                <span>{{ t('knownFacts') }}</span>
+                <textarea v-model="knownFacts" class="textarea context-textarea" :placeholder="t('knownFactsPlaceholder')" :disabled="loading" />
+              </label>
+              <label class="context-field context-field-wide">
+                <span>{{ t('verificationFocus') }}</span>
+                <textarea v-model="verificationFocus" class="textarea context-textarea" :placeholder="t('verificationFocusPlaceholder')" :disabled="loading" />
+              </label>
+            </div>
+          </div>
           <div class="split-actions" style="margin-top: 12px">
             <div class="toolbar">
               <input v-model="tenantCode" class="input" style="width: 150px" :placeholder="t('tenantCode')" :disabled="loading" @change="persistTenant" />
@@ -166,6 +204,12 @@ const question = ref('')
 const userRole = ref(localStorage.getItem('chat_user_role') || 'employee')
 const province = ref(localStorage.getItem('chat_province') || '陕西省')
 const city = ref(localStorage.getItem('chat_city') || '西安市')
+const answerStyle = ref(localStorage.getItem('chat_answer_style') || '')
+const userGoal = ref(localStorage.getItem('chat_user_goal') || '政策咨询')
+const urgencyLevel = ref(localStorage.getItem('chat_urgency_level') || '常规咨询')
+const outputFormat = ref(localStorage.getItem('chat_output_format') || '结论 + 依据 + 行动清单')
+const knownFacts = ref(localStorage.getItem('chat_known_facts') || '')
+const verificationFocus = ref(localStorage.getItem('chat_verification_focus') || '')
 const answer = ref('')
 const sources = ref([])
 const tasks = ref([])
@@ -184,6 +228,7 @@ const fileInput = ref(null)
 const activeGenerationId = ref('')
 const requestController = ref(null)
 const stopping = ref(false)
+const contextOpen = ref(localStorage.getItem('chat_context_open') === 'true')
 const LAST_CHAT_KEY = 'chat_last_state'
 
 const displayedRiskLevel = computed(() => getDisplayedRiskLevel({ answer: answer.value, risk_level: riskLevel.value }))
@@ -196,6 +241,24 @@ const userRoleOptions = computed(() => [
   { value: 'legal_staff', label: t('roleLegalStaff') },
   { value: 'employee', label: t('roleEmployee') },
   { value: 'admin_user', label: t('roleAdminUser') }
+])
+const userGoalOptions = computed(() => [
+  { value: '政策咨询', label: t('goalPolicyQuery') },
+  { value: '风险评估', label: t('goalRiskAssessment') },
+  { value: '材料核验', label: t('goalDocumentReview') },
+  { value: '处理方案', label: t('goalActionPlan') }
+])
+const urgencyOptions = computed(() => [
+  { value: '常规咨询', label: t('urgencyNormal') },
+  { value: '今天需要处理', label: t('urgencyToday') },
+  { value: '高风险待复核', label: t('urgencyHighRisk') },
+  { value: '对外回复前确认', label: t('urgencyBeforeReply') }
+])
+const outputFormatOptions = computed(() => [
+  { value: '结论 + 依据 + 行动清单', label: t('formatConclusionAction') },
+  { value: '表格 + 风险等级 + 待核验项', label: t('formatTableRisk') },
+  { value: '给员工的简明回复', label: t('formatEmployeeReply') },
+  { value: '给 HR/法务的复核清单', label: t('formatReviewChecklist') }
 ])
 const regionTree = {
   '北京市': ['北京市'],
@@ -331,6 +394,11 @@ const removeFile = () => {
   }
 }
 
+const setContextStorage = (key, value) => {
+  if (value) localStorage.setItem(key, value)
+  else localStorage.removeItem(key)
+}
+
 const submitQuestion = async () => {
   if (!question.value.trim() || loading.value) return
   const submittedQuestion = question.value
@@ -350,7 +418,13 @@ const submitQuestion = async () => {
       language: locale.value,
       user_role: userRole.value,
       province: province.value,
-      city: city.value
+      city: city.value,
+      answer_style: answerStyle.value,
+      user_goal: userGoal.value,
+      urgency_level: urgencyLevel.value,
+      output_format: outputFormat.value,
+      known_facts: knownFacts.value,
+      verification_focus: verificationFocus.value
     }
     const res = attachedFile.value
       ? await chatWithFile(payload, attachedFile.value, { signal: requestController.value.signal })
@@ -444,6 +518,34 @@ watch(province, (value) => {
 watch(city, (value) => {
   localStorage.setItem('chat_city', value)
 })
+
+watch(answerStyle, (value) => {
+  setContextStorage('chat_answer_style', value)
+})
+
+watch(userGoal, (value) => {
+  setContextStorage('chat_user_goal', value)
+})
+
+watch(urgencyLevel, (value) => {
+  setContextStorage('chat_urgency_level', value)
+})
+
+watch(outputFormat, (value) => {
+  setContextStorage('chat_output_format', value)
+})
+
+watch(knownFacts, (value) => {
+  setContextStorage('chat_known_facts', value)
+})
+
+watch(verificationFocus, (value) => {
+  setContextStorage('chat_verification_focus', value)
+})
+
+watch(contextOpen, (value) => {
+  localStorage.setItem('chat_context_open', value ? 'true' : 'false')
+})
 </script>
 
 <style scoped>
@@ -514,6 +616,71 @@ watch(city, (value) => {
 .file-pill button:hover {
   color: var(--danger);
   background: rgba(201, 54, 54, 0.08);
+}
+
+.context-panel {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  overflow: hidden;
+}
+
+.context-toggle {
+  width: 100%;
+  min-height: 40px;
+  border: 0;
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 800;
+}
+
+.context-toggle:hover {
+  color: var(--primary);
+}
+
+.context-toggle:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.context-toggle-state {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.context-grid {
+  padding: 0 12px 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.context-field {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.context-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.context-field-wide {
+  grid-column: 1 / -1;
+}
+
+.context-textarea {
+  min-height: 72px;
 }
 
 .answer-block {
@@ -782,6 +949,10 @@ watch(city, (value) => {
 }
 
 @media (max-width: 640px) {
+  .context-grid {
+    grid-template-columns: 1fr;
+  }
+
   .answer-loading {
     grid-template-columns: 1fr;
   }

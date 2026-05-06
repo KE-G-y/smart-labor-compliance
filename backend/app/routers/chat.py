@@ -177,6 +177,12 @@ async def chat(
     user_role = sanitize_text(request_data.user_role) or "employee"
     province = sanitize_text(request_data.province) or "陕西省"
     city = sanitize_text(request_data.city) or "西安市"
+    answer_style = sanitize_text(request_data.answer_style)
+    user_goal = sanitize_text(request_data.user_goal)
+    urgency_level = sanitize_text(request_data.urgency_level)
+    output_format = sanitize_text(request_data.output_format)
+    known_facts = sanitize_text(request_data.known_facts)
+    verification_focus = sanitize_text(request_data.verification_focus)
 
     service = ComplianceAnswerService(db, tenant)
     response = await run_in_threadpool(
@@ -189,6 +195,12 @@ async def chat(
         province=province,
         city=city,
         generation_id=request_data.generation_id,
+        answer_style=answer_style,
+        user_goal=user_goal,
+        urgency_level=urgency_level,
+        output_format=output_format,
+        known_facts=known_facts,
+        verification_focus=verification_focus,
     )
 
     response = _persist_chat_log(
@@ -217,6 +229,12 @@ async def chat_with_file(
     user_role: str = Form("employee"),
     province: str = Form("陕西省"),
     city: str = Form("西安市"),
+    answer_style: Optional[str] = Form(None),
+    user_goal: Optional[str] = Form(None),
+    urgency_level: Optional[str] = Form(None),
+    output_format: Optional[str] = Form(None),
+    known_facts: Optional[str] = Form(None),
+    verification_focus: Optional[str] = Form(None),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     header_tenant: Tenant = Depends(get_public_tenant),
@@ -238,6 +256,12 @@ async def chat_with_file(
     user_role = sanitize_text(user_role) or "employee"
     province = sanitize_text(province) or "陕西省"
     city = sanitize_text(city) or "西安市"
+    answer_style = sanitize_text(answer_style)
+    user_goal = sanitize_text(user_goal)
+    urgency_level = sanitize_text(urgency_level)
+    output_format = sanitize_text(output_format)
+    known_facts = sanitize_text(known_facts)
+    verification_focus = sanitize_text(verification_focus)
 
     service = ComplianceAnswerService(db, tenant)
     try:
@@ -256,6 +280,12 @@ async def chat_with_file(
                 file=file.file,
             ),
             generation_id=generation_id,
+            answer_style=answer_style,
+            user_goal=user_goal,
+            urgency_level=urgency_level,
+            output_format=output_format,
+            known_facts=known_facts,
+            verification_focus=verification_focus,
         )
     finally:
         await file.close()

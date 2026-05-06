@@ -1,5 +1,6 @@
 import csv
 import io
+import time
 
 from conftest import assert_ok, unique
 
@@ -218,3 +219,78 @@ def test_knowledge_packages_status_import_export_batch_and_test_questions(client
     test_questions = assert_ok(client.get(f"{api_base_url}/api/admin/test-questions", headers=tenant_headers, timeout=10))
     assert test_questions["data"]["total"] >= 4
 
+
+def test_admin_catalog_lists_return_newest_records_first(client, api_base_url, tenant_headers):
+    faq_prefix = unique("ORDER_FAQ")
+    first_faq = assert_ok(
+        client.post(
+            f"{api_base_url}/api/admin/faqs",
+            headers=tenant_headers,
+            json={
+                "faq_code": f"{faq_prefix}_1",
+                "question": f"{faq_prefix} 第一条排序测试问题",
+                "answer": "第一条排序测试答案",
+            },
+            timeout=10,
+        )
+    )["data"]
+    time.sleep(1)
+    second_faq = assert_ok(
+        client.post(
+            f"{api_base_url}/api/admin/faqs",
+            headers=tenant_headers,
+            json={
+                "faq_code": f"{faq_prefix}_2",
+                "question": f"{faq_prefix} 第二条排序测试问题",
+                "answer": "第二条排序测试答案",
+            },
+            timeout=10,
+        )
+    )["data"]
+
+    faqs = assert_ok(
+        client.get(
+            f"{api_base_url}/api/admin/faqs",
+            headers=tenant_headers,
+            params={"keyword": faq_prefix, "page": 1, "page_size": 10},
+            timeout=10,
+        )
+    )["data"]["list"]
+    assert [item["id"] for item in faqs[:2]] == [second_faq["id"], first_faq["id"]]
+
+    source_prefix = unique("ORDER_SRC")
+    first_source = assert_ok(
+        client.post(
+            f"{api_base_url}/api/admin/sources",
+            headers=tenant_headers,
+            json={
+                "source_code": f"{source_prefix}_1",
+                "title": f"{source_prefix} 第一条排序测试来源",
+                "url": f"https://example.com/{source_prefix}/1",
+            },
+            timeout=10,
+        )
+    )["data"]
+    time.sleep(1)
+    second_source = assert_ok(
+        client.post(
+            f"{api_base_url}/api/admin/sources",
+            headers=tenant_headers,
+            json={
+                "source_code": f"{source_prefix}_2",
+                "title": f"{source_prefix} 第二条排序测试来源",
+                "url": f"https://example.com/{source_prefix}/2",
+            },
+            timeout=10,
+        )
+    )["data"]
+
+    sources = assert_ok(
+        client.get(
+            f"{api_base_url}/api/admin/sources",
+            headers=tenant_headers,
+            params={"keyword": source_prefix, "page": 1, "page_size": 10},
+            timeout=10,
+        )
+    )["data"]["list"]
+    assert [item["id"] for item in sources[:2]] == [second_source["id"], first_source["id"]]

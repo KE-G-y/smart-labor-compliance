@@ -99,6 +99,9 @@ export const getTenants = (params) => api.get('/admin/tenants', { params })
 export const addTenant = (data) => api.post('/admin/tenants', data)
 export const updateTenant = (id, data) => api.put(`/admin/tenants/${id}`, data)
 
+export const getSystemConfig = () => api.get('/admin/system-config')
+export const updateSystemConfig = (data) => api.put('/admin/system-config', data)
+
 export const getLogs = (params) => api.get('/admin/logs', { params })
 export const getLogDetail = (id) => api.get(`/admin/logs/${id}`)
 

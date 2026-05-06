@@ -119,6 +119,7 @@ const navIcon = (zh, en) => locale.value === 'en' ? en : zh
 const navItems = computed(() => [
   { to: '/admin', label: t('dashboard'), permission: null, icon: navIcon('概', 'D') },
   { to: '/admin/tenants', label: t('tenants'), permission: 'tenants', icon: navIcon('租', 'Tn') },
+  { to: '/admin/system-config', label: t('systemConfigTitle'), permission: 'system_config', icon: navIcon('设', 'Cfg') },
   { to: '/admin/logs', label: t('logs'), permission: 'logs', icon: navIcon('问', 'Log') },
   { to: '/admin/feedbacks', label: t('feedbacks'), permission: 'feedbacks', icon: navIcon('馈', 'Fb') },
   { to: '/admin/faqs', label: t('faqs'), permission: 'faqs', icon: navIcon('F', 'FAQ') },

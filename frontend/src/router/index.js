@@ -12,6 +12,7 @@ const AdminPackages = () => import('@/views/admin/Packages.vue')
 const AdminAccounts = () => import('@/views/admin/Accounts.vue')
 const AdminTenants = () => import('@/views/admin/Tenants.vue')
 const AdminTests = () => import('@/views/admin/TestQuestions.vue')
+const AdminSystemConfig = () => import('@/views/admin/SystemConfig.vue')
 
 const routes = [
   { path: '/', name: 'Home', component: Home },
@@ -25,7 +26,8 @@ const routes = [
   { path: '/admin/sources', name: 'AdminSources', component: AdminSources, meta: { requiresAuth: true, permissions: ['sources'] } },
   { path: '/admin/packages', name: 'AdminPackages', component: AdminPackages, meta: { requiresAuth: true, permissions: ['packages'] } },
   { path: '/admin/tests', name: 'AdminTests', component: AdminTests, meta: { requiresAuth: true, permissions: ['test_questions'] } },
-  { path: '/admin/accounts', name: 'AdminAccounts', component: AdminAccounts, meta: { requiresAuth: true, permissions: ['admins'] } }
+  { path: '/admin/accounts', name: 'AdminAccounts', component: AdminAccounts, meta: { requiresAuth: true, permissions: ['admins'] } },
+  { path: '/admin/system-config', name: 'AdminSystemConfig', component: AdminSystemConfig, meta: { requiresAuth: true, permissions: ['system_config'] } }
 ]
 
 const router = createRouter({

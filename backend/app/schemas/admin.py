@@ -124,3 +124,27 @@ class TenantResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class SystemConfigUpdate(BaseModel):
+    """系统配置更新请求。"""
+
+    dify_base_url: Optional[str] = None
+    dify_api_key: Optional[str] = None
+    dify_timeout_seconds: Optional[int] = None
+    ragflow_base_url: Optional[str] = None
+    ragflow_web_url: Optional[str] = None
+    ragflow_api_key: Optional[str] = None
+    ragflow_timeout_seconds: Optional[int] = None
+
+
+class SystemConfigResponse(BaseModel):
+    """系统配置响应（返回配置的 key，不返回敏感 value）。"""
+
+    dify_base_url: Optional[str] = None
+    dify_api_key_configured: bool = False
+    dify_timeout_seconds: int = 30
+    ragflow_base_url: Optional[str] = None
+    ragflow_web_url: Optional[str] = None
+    ragflow_api_key_configured: bool = False
+    ragflow_timeout_seconds: int = 10

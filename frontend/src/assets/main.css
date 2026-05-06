@@ -1427,19 +1427,65 @@ a {
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
+  gap: 16px;
 }
 
 .stat {
-  background: var(--surface);
+  background: linear-gradient(135deg, var(--surface) 0%, var(--bg-card) 100%);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 16px;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.stat::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  right: -50%;
+  width: 100px;
+  height: 100px;
+  background: linear-gradient(135deg, rgba(var(--primary-rgb), 0.05) 0%, transparent 50%);
+  border-radius: 50%;
+}
+
+.stat:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+  border-color: rgba(var(--primary-rgb), 0.2);
+}
+
+.stat span {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  position: relative;
+  z-index: 1;
 }
 
 .stat strong {
   display: block;
-  font-size: 28px;
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+  position: relative;
+  z-index: 1;
+}
+
+.stat strong::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  width: 30%;
+  height: 3px;
+  background: linear-gradient(90deg, var(--primary) 0%, transparent 100%);
+  border-radius: 2px;
 }
 
 .split-actions {

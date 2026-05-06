@@ -35,7 +35,9 @@ const requiredApiContracts = [
   ['updatePackageStatus', '/admin/knowledge-packages/${id}/status'],
   ['getTestQuestions', "api.get('/admin/test-questions'"],
   ['getRoles', "api.get('/admin/roles'"],
-  ['getAdmins', "api.get('/admin/admins'"]
+  ['getAdmins', "api.get('/admin/admins'"],
+  ['getSystemConfig', "api.get('/admin/system-config'"],
+  ['updateSystemConfig', "api.put('/admin/system-config'"],
 ]
 
 const requiredRoutes = [
@@ -50,7 +52,8 @@ const requiredRoutes = [
   "path: '/admin/sources'",
   "path: '/admin/packages'",
   "path: '/admin/tests'",
-  "path: '/admin/accounts'"
+  "path: '/admin/accounts'",
+  "path: '/admin/system-config'"
 ]
 
 const failures = []

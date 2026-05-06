@@ -43,6 +43,7 @@ ROLE_PERMISSIONS = {
         "packages_batch",
         "test_questions",
         "settings",
+        "system_config",
     ],
     "tenant_admin": [
         "dashboard",

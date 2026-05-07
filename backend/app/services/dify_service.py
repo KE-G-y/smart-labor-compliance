@@ -19,6 +19,7 @@ from app.database import settings
 from app.models import FAQ, KnowledgePackage, Source, Tenant
 from app.schemas.chat import ChatResponse, SourceInfo, TaskInfo
 from app.security import sanitize_text
+from app.services.runtime_config import get_runtime_config
 
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,14 @@ class ComplianceAnswerService:
     def __init__(self, db: Session, tenant: Tenant):
         self.db = db
         self.tenant = tenant
+        self.runtime_config = get_runtime_config(db)
+        self.last_dify_error: Optional[str] = None
+
+    def _get_dify_base_url(self) -> str:
+        return self.runtime_config.dify_base_url
+
+    def _get_dify_timeout_seconds(self) -> int:
+        return self.runtime_config.dify_timeout_seconds
 
     def answer(
         self,
@@ -93,6 +102,7 @@ class ComplianceAnswerService:
         verification_focus: Optional[str] = None,
     ) -> ChatResponse:
         question = sanitize_text(question) or ""
+        self.last_dify_error = None
         context = self._normalize_context(
             answer_style=answer_style,
             user_goal=user_goal,
@@ -123,8 +133,9 @@ class ComplianceAnswerService:
 
         tenant_dify_key_value = getattr(self.tenant, "dify_api_key", None)
         tenant_dify_key = str(tenant_dify_key_value).strip() if tenant_dify_key_value is not None else ""
-        dify_key = tenant_dify_key if tenant_dify_key != "" else str(settings.dify_api_key or "")
-        if dify_key != "":
+        dify_key = tenant_dify_key or self.runtime_config.dify_api_key
+        attempted_dify = dify_key != ""
+        if attempted_dify:
             dify_response = self._call_dify(
                 question,
                 dify_key,
@@ -161,9 +172,34 @@ class ComplianceAnswerService:
             )
 
         local_response = self._answer_from_faq(question, language)
+        if attempted_dify:
+            local_response.provider = "dify_unavailable"
+            local_response.fallback_reason = self.last_dify_error or "Dify 调用失败，已回退到本地 FAQ"
         local_response.answer = self._with_context_prefix(local_response.answer, user_role, province, city, context)
         local_response.response_time = int(time.time() * 1000) - start_time
         return local_response
+
+    def _set_dify_error(self, message: str) -> None:
+        self.last_dify_error = sanitize_text(message) or message
+
+    def _dify_error_from_response(self, response: requests.Response) -> str:
+        try:
+            data = response.json()
+        except ValueError:
+            data = {}
+        message = data.get("message") if isinstance(data, dict) else None
+        if message:
+            return f"Dify 返回错误 {response.status_code}: {message}"
+        body = (response.text or "").strip()
+        if body:
+            return f"Dify 返回错误 {response.status_code}: {body[:200]}"
+        return f"Dify 返回错误 {response.status_code}"
+
+    def _dify_error_from_event(self, event: dict) -> str:
+        message = event.get("message") or event.get("error") or event.get("code")
+        if message:
+            return f"Dify 流式返回错误: {message}"
+        return "Dify 流式返回错误"
 
     def _call_dify(
         self,
@@ -201,13 +237,14 @@ class ComplianceAnswerService:
                 ]
 
             response = requests.post(
-                f"{settings.dify_base_url.rstrip('/')}/chat-messages",
+                f"{self._get_dify_base_url().rstrip('/')}/chat-messages",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json=payload,
                 stream=True,
-                timeout=settings.dify_timeout_seconds,
+                timeout=self._get_dify_timeout_seconds(),
             )
             if response.status_code != 200:
+                self._set_dify_error(self._dify_error_from_response(response))
                 logger.warning(
                     "Dify chat request failed; falling back to local FAQ. status=%s body=%s",
                     response.status_code,
@@ -217,6 +254,8 @@ class ComplianceAnswerService:
 
             data = self._consume_dify_stream(response, generation_id, api_key, user_id or "anonymous")
             if not data:
+                if not self.last_dify_error:
+                    self._set_dify_error("Dify 未返回有效回答，已回退到本地 FAQ")
                 return None
 
             metadata = data.get("metadata") or {}
@@ -243,14 +282,16 @@ class ComplianceAnswerService:
                 disclaimer=DISCLAIMER,
             )
         except requests.Timeout as exc:
+            self._set_dify_error(f"Dify 请求超时: {exc}")
             logger.warning(
                 "Dify chat request timed out after %ss; falling back to local FAQ. url=%s error=%s",
-                settings.dify_timeout_seconds,
-                f"{settings.dify_base_url.rstrip('/')}/chat-messages",
+                self._get_dify_timeout_seconds(),
+                f"{self._get_dify_base_url().rstrip('/')}/chat-messages",
                 exc,
             )
             return None
         except requests.RequestException as exc:
+            self._set_dify_error(f"Dify 请求失败: {exc}")
             logger.warning("Dify chat request failed; falling back to local FAQ. error=%s", exc)
             return None
         finally:
@@ -285,7 +326,14 @@ class ComplianceAnswerService:
 
             task_id = task_id or str(event.get("task_id") or "")
             if generation_id and task_id:
-                self._register_generation(generation_id, task_id, api_key, user_id)
+                self._register_generation(
+                    generation_id,
+                    task_id,
+                    api_key,
+                    user_id,
+                    self._get_dify_base_url(),
+                    self._get_dify_timeout_seconds(),
+                )
 
             event_type = event.get("event")
             if event_type == "message":
@@ -302,6 +350,7 @@ class ComplianceAnswerService:
                 if outputs.get("answer"):
                     answer_parts = [outputs["answer"]]
             elif event_type == "error":
+                self._set_dify_error(self._dify_error_from_event(event))
                 logger.warning("Dify stream returned error: %s", event)
                 return None
 
@@ -310,12 +359,22 @@ class ComplianceAnswerService:
         return final_data if final_data["answer"] else None
 
     @classmethod
-    def _register_generation(cls, generation_id: str, task_id: str, api_key: str, user_id: str) -> None:
+    def _register_generation(
+        cls,
+        generation_id: str,
+        task_id: str,
+        api_key: str,
+        user_id: str,
+        base_url: str,
+        timeout_seconds: int,
+    ) -> None:
         with _generation_tasks_lock:
             _generation_tasks[generation_id] = {
                 "task_id": task_id,
                 "api_key": api_key,
                 "user_id": user_id,
+                "base_url": base_url,
+                "timeout_seconds": str(timeout_seconds),
             }
 
     @classmethod
@@ -332,11 +391,13 @@ class ComplianceAnswerService:
             return False
 
         try:
+            base_url = task.get("base_url") or settings.dify_base_url
+            timeout_seconds = int(task.get("timeout_seconds") or 10)
             response = requests.post(
-                f"{settings.dify_base_url.rstrip('/')}/chat-messages/{task['task_id']}/stop",
+                f"{base_url.rstrip('/')}/chat-messages/{task['task_id']}/stop",
                 headers={"Authorization": f"Bearer {task['api_key']}", "Content-Type": "application/json"},
                 json={"user": task["user_id"]},
-                timeout=10,
+                timeout=timeout_seconds,
             )
             if response.status_code >= 400:
                 logger.warning("Dify stop request failed. status=%s body=%s", response.status_code, response.text[:500])
@@ -358,7 +419,7 @@ class ComplianceAnswerService:
             if hasattr(attachment.file, "seek"):
                 attachment.file.seek(0)
             response = requests.post(
-                f"{settings.dify_base_url.rstrip('/')}/files/upload",
+                f"{self._get_dify_base_url().rstrip('/')}/files/upload",
                 headers={"Authorization": f"Bearer {api_key}"},
                 data={"user": user_id or "anonymous"},
                 files={
@@ -368,7 +429,7 @@ class ComplianceAnswerService:
                         attachment.content_type or "application/octet-stream",
                     )
                 },
-                timeout=settings.dify_timeout_seconds,
+                timeout=self._get_dify_timeout_seconds(),
             )
             if response.status_code not in (200, 201):
                 logger.warning(
@@ -382,7 +443,7 @@ class ComplianceAnswerService:
         except requests.Timeout as exc:
             logger.warning(
                 "Dify file upload timed out after %ss. filename=%s error=%s",
-                settings.dify_timeout_seconds,
+                self._get_dify_timeout_seconds(),
                 attachment.filename,
                 exc,
             )
@@ -509,7 +570,7 @@ class ComplianceAnswerService:
                     "通过当地人社、医保、税务等官方渠道核验最新办理入口。",
                     "对高风险事项保留书面处理记录，必要时交由 HR/法务复核。",
                 ],
-                url=settings.ragflow_web_url,
+                url=self.runtime_config.ragflow_web_url,
             )
         ]
 
@@ -662,9 +723,25 @@ class ComplianceAnswerService:
 
 def check_external_services() -> dict:
     """探测本机 Dify 与 RAGFlow 服务状态。"""
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        runtime_config = get_runtime_config(db)
+    finally:
+        db.close()
+
     services = {
-        "dify": {"name": "Dify", "url": settings.dify_base_url, "configured": bool(settings.dify_api_key)},
-        "ragflow": {"name": "RAGFlow", "url": settings.ragflow_web_url, "configured": bool(settings.ragflow_api_key)},
+        "dify": {
+            "name": "Dify",
+            "url": runtime_config.dify_base_url,
+            "configured": bool(runtime_config.dify_api_key),
+        },
+        "ragflow": {
+            "name": "RAGFlow",
+            "url": runtime_config.ragflow_web_url,
+            "configured": bool(runtime_config.ragflow_api_key),
+        },
     }
     for key, item in services.items():
         probe_url = item["url"]

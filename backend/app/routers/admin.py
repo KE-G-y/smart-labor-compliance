@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db, settings
 from app.dependencies import get_admin_tenant_filter, get_current_admin, normalize_pagination, order_by_newest
-from app.models import Admin, ChatLog, FAQ, Feedback, KnowledgePackage, Source, SystemConfig, Tenant, TestQuestion
+from app.models import Admin, ChatLog, FAQ, Feedback, KnowledgePackage, Source, Tenant, TestQuestion
 from app.response import ok, page as page_response
 from app.schemas.admin import (
     AdminCreate,
@@ -44,6 +44,12 @@ from app.security import (
     sanitize_text,
 )
 from app.services.dify_service import check_external_services
+from app.services.runtime_config import (
+    CONFIG_KEYS,
+    get_runtime_config,
+    normalize_config_update,
+    set_db_config_value,
+)
 
 router = APIRouter(prefix="/api/admin", tags=["管理端"])
 
@@ -164,7 +170,6 @@ def _serialize_tenant(tenant: Tenant) -> dict:
         "contact_phone": tenant.contact_phone,
         "status": tenant.status,
         "is_demo": tenant.is_demo,
-        "dify_api_key": tenant.dify_api_key,
         "dify_configured": bool(tenant.dify_api_key),
         "ragflow_dataset_id": tenant.ragflow_dataset_id,
         "notes": tenant.notes,
@@ -410,44 +415,21 @@ async def get_statistics(
     return ok(data)
 
 
-CONFIG_KEYS = {
-    "dify_base_url": "dify_base_url",
-    "dify_api_key": "dify_api_key",
-    "dify_timeout_seconds": "dify_timeout_seconds",
-    "ragflow_base_url": "ragflow_base_url",
-    "ragflow_web_url": "ragflow_web_url",
-    "ragflow_api_key": "ragflow_api_key",
-    "ragflow_timeout_seconds": "ragflow_timeout_seconds",
-}
-
-
-def _get_db_config_value(db: Session, key: str) -> Optional[str]:
-    row = db.query(SystemConfig).filter(SystemConfig.id == key).first()
-    return row.value if row else None
-
-
-def _set_db_config_value(db: Session, key: str, value: Optional[str]) -> None:
-    existing = db.query(SystemConfig).filter(SystemConfig.id == key).first()
-    if existing:
-        existing.value = value
-    else:
-        db.add(SystemConfig(id=key, value=value))
-
-
 @router.get("/system-config")
 async def get_system_config(
     db: Session = Depends(get_db),
     current_admin: dict = Depends(get_current_admin),
 ):
     require_role(current_admin["role"], SUPER_ADMIN_ROLES)
+    runtime_config = get_runtime_config(db)
     return ok(SystemConfigResponse(
-        dify_base_url=_get_db_config_value(db, "dify_base_url") or settings.dify_base_url,
-        dify_api_key_configured=bool(_get_db_config_value(db, "dify_api_key") or settings.dify_api_key),
-        dify_timeout_seconds=int(_get_db_config_value(db, "dify_timeout_seconds") or settings.dify_timeout_seconds),
-        ragflow_base_url=_get_db_config_value(db, "ragflow_base_url") or settings.ragflow_base_url,
-        ragflow_web_url=_get_db_config_value(db, "ragflow_web_url") or settings.ragflow_web_url,
-        ragflow_api_key_configured=bool(_get_db_config_value(db, "ragflow_api_key") or settings.ragflow_api_key),
-        ragflow_timeout_seconds=int(_get_db_config_value(db, "ragflow_timeout_seconds") or settings.ragflow_timeout_seconds),
+        dify_base_url=runtime_config.dify_base_url,
+        dify_api_key_configured=bool(runtime_config.dify_api_key),
+        dify_timeout_seconds=runtime_config.dify_timeout_seconds,
+        ragflow_base_url=runtime_config.ragflow_base_url,
+        ragflow_web_url=runtime_config.ragflow_web_url,
+        ragflow_api_key_configured=bool(runtime_config.ragflow_api_key),
+        ragflow_timeout_seconds=runtime_config.ragflow_timeout_seconds,
     ))
 
 
@@ -459,9 +441,18 @@ async def update_system_config(
 ):
     require_role(current_admin["role"], SUPER_ADMIN_ROLES)
     updates = request.model_dump(exclude_unset=True)
+
+    normalized_updates = {}
     for key, value in updates.items():
-        if key in CONFIG_KEYS:
-            _set_db_config_value(db, key, str(value) if value is not None else None)
+        if key not in CONFIG_KEYS:
+            continue
+        try:
+            normalized_updates[key] = normalize_config_update(key, value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    for key, value in normalized_updates.items():
+        set_db_config_value(db, key, value)
     db.commit()
     return ok({"message": "配置更新成功"}, "配置更新成功")
 

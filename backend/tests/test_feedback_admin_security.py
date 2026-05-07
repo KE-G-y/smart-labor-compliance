@@ -125,6 +125,58 @@ def test_tenant_admin_cannot_cross_tenant_or_create_super_admin(client, api_base
     assert create_super.status_code == 403
 
 
+def test_tenant_listing_hides_dify_api_key_and_blank_update_preserves_existing_key(client, api_base_url, super_headers):
+    tenant_code = unique("tenant-key")
+    created = assert_ok(
+        client.post(
+            f"{api_base_url}/api/admin/tenants",
+            headers=super_headers,
+            json={"code": tenant_code, "name": "自动化密钥租户"},
+            timeout=10,
+        )
+    )
+    tenant_id = created["data"]["id"]
+
+    updated = assert_ok(
+        client.put(
+            f"{api_base_url}/api/admin/tenants/{tenant_id}",
+            headers=super_headers,
+            json={"dify_api_key": "tenant-secret-key"},
+            timeout=10,
+        )
+    )
+    assert updated["data"]["dify_configured"] is True
+    assert "dify_api_key" not in updated["data"]
+
+    listed = assert_ok(
+        client.get(f"{api_base_url}/api/admin/tenants", headers=super_headers, params={"keyword": tenant_code}, timeout=10)
+    )
+    row = listed["data"]["list"][0]
+    assert row["dify_configured"] is True
+    assert "dify_api_key" not in row
+    assert "tenant-secret-key" not in str(listed["data"])
+
+    renamed = assert_ok(
+        client.put(
+            f"{api_base_url}/api/admin/tenants/{tenant_id}",
+            headers=super_headers,
+            json={"name": "自动化密钥租户已改名"},
+            timeout=10,
+        )
+    )
+    assert renamed["data"]["dify_configured"] is True
+
+    cleared = assert_ok(
+        client.put(
+            f"{api_base_url}/api/admin/tenants/{tenant_id}",
+            headers=super_headers,
+            json={"dify_api_key": None},
+            timeout=10,
+        )
+    )
+    assert cleared["data"]["dify_configured"] is False
+
+
 def test_viewer_role_is_read_only_for_faq_source_feedback_and_package_modules(client, api_base_url, tenant_headers):
     username = unique("viewer")
     created = assert_ok(
@@ -160,4 +212,3 @@ def test_viewer_role_is_read_only_for_faq_source_feedback_and_package_modules(cl
     for method, path, json_body in forbidden_calls:
         response = getattr(client, method)(f"{api_base_url}{path}", headers=viewer_headers, json=json_body, timeout=10)
         assert response.status_code == 403, f"{method.upper()} {path} returned {response.status_code}: {response.text}"
-

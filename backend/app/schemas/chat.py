@@ -55,6 +55,7 @@ class ChatResponse(BaseModel):
     conversation_id: Optional[str] = None
     question_id: Optional[int] = None
     provider: str = "local_faq"
+    fallback_reason: Optional[str] = None
     risk_level: str = "medium"
     suggestions: List[str] = []
     disclaimer: Optional[str] = None

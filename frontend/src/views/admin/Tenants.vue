@@ -74,7 +74,28 @@
                   <option value="inactive">{{ t('inactive') || '停用' }}</option>
                 </select>
               </div>
-              <div class="form-group full"><label>{{ t('difyApiKey') || 'Dify API Key' }}</label><input v-model="editForm.dify_api_key" class="input" type="password" :placeholder="t('difyApiKeyPlaceholder') || '请输入 Dify API Key'" /></div>
+              <div class="form-group full">
+                <label>{{ t('difyApiKey') || 'Dify API Key' }}</label>
+                <div class="secret-row">
+                  <input
+                    v-model="editForm.dify_api_key"
+                    class="input"
+                    type="password"
+                    :disabled="editForm.dify_api_key_clear"
+                    :placeholder="editingTenant?.dify_configured ? t('tenantDifyApiKeyConfiguredPlaceholder') : t('difyApiKeyPlaceholder')"
+                    @input="editForm.dify_api_key_clear = false"
+                  />
+                  <button v-if="editingTenant?.dify_configured" class="btn" type="button" @click="toggleTenantDifyClear">
+                    {{ editForm.dify_api_key_clear ? t('undoClear') : t('clearApiKey') }}
+                  </button>
+                </div>
+                <div v-if="editingTenant?.dify_configured || editForm.dify_api_key_clear" class="config-hint">
+                  <span :class="['tag', editForm.dify_api_key_clear ? 'warning' : 'success']">
+                    {{ editForm.dify_api_key_clear ? t('willClear') : t('configured') }}
+                  </span>
+                  <span>{{ editForm.dify_api_key_clear ? t('apiKeyClearHint') : t('tenantDifyApiKeyConfiguredHint') }}</span>
+                </div>
+              </div>
               <div class="form-group full"><label>{{ t('notes') }}</label><textarea v-model="editForm.notes" class="textarea tenant-notes" /></div>
             </div>
             <div class="modal-actions modal-footer">
@@ -118,7 +139,7 @@ const tenantColumns = computed(() => [
   { key: 'actions', label: t('actions'), width: '80px' }
 ])
 const initialForm = () => ({ code: '', name: '', industry: '', region: t('defaultRegion'), admin_username: '', admin_password: '', notes: '' })
-const editInitialForm = () => ({ name: '', industry: '', region: '', contact_name: '', contact_email: '', contact_phone: '', status: 'active', notes: '', dify_api_key: '' })
+const editInitialForm = () => ({ name: '', industry: '', region: '', contact_name: '', contact_email: '', contact_phone: '', status: 'active', notes: '', dify_api_key: '', dify_api_key_clear: false })
 const form = ref(initialForm())
 const editForm = ref(editInitialForm())
 
@@ -160,7 +181,8 @@ const openEditModal = (tenant) => {
     contact_phone: tenant.contact_phone || '',
     status: tenant.status || 'active',
     notes: tenant.notes || '',
-    dify_api_key: tenant.dify_api_key || ''
+    dify_api_key: '',
+    dify_api_key_clear: false
   }
   editModalOpen.value = true
 }
@@ -172,9 +194,26 @@ const closeEditModal = () => {
 }
 
 const saveEditTenant = async () => {
-  await updateTenant(editingTenant.value.id, editForm.value)
+  const payload = { ...editForm.value }
+  const difyKey = (payload.dify_api_key || '').trim()
+  if (payload.dify_api_key_clear) {
+    payload.dify_api_key = null
+  } else if (difyKey) {
+    payload.dify_api_key = difyKey
+  } else {
+    delete payload.dify_api_key
+  }
+  delete payload.dify_api_key_clear
+  await updateTenant(editingTenant.value.id, payload)
   closeEditModal()
   fetchTenants()
+}
+
+const toggleTenantDifyClear = () => {
+  editForm.value.dify_api_key_clear = !editForm.value.dify_api_key_clear
+  if (editForm.value.dify_api_key_clear) {
+    editForm.value.dify_api_key = ''
+  }
 }
 
 const formatTime = (time) => formatDateTime(time)
@@ -189,6 +228,31 @@ onMounted(fetchTenants)
 
 .tenant-notes {
   min-height: 100px;
+}
+
+.secret-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.secret-row .input {
+  min-width: 0;
+  flex: 1;
+}
+
+.secret-row .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.config-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 </style>

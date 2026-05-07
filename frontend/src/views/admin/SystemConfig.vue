@@ -27,10 +27,24 @@
           </div>
           <div class="form-group">
             <label>{{ t('difyApiKey') }}</label>
-            <input v-model="form.dify_api_key" class="input" type="password" :placeholder="form.dify_api_key_configured ? t('difyApiKeyConfiguredPlaceholder') : t('difyApiKeyPlaceholder')" />
-            <div v-if="form.dify_api_key_configured" class="config-hint">
-              <span class="tag success">{{ t('configured') }}</span>
-              <span>{{ t('difyApiKeyConfiguredHint') }}</span>
+            <div class="secret-row">
+              <input
+                v-model="form.dify_api_key"
+                class="input"
+                type="password"
+                :disabled="form.dify_api_key_clear"
+                :placeholder="form.dify_api_key_configured ? t('difyApiKeyConfiguredPlaceholder') : t('difyApiKeyPlaceholder')"
+                @input="form.dify_api_key_clear = false"
+              />
+              <button v-if="form.dify_api_key_configured" class="btn" type="button" @click="toggleSecretClear('dify')">
+                {{ form.dify_api_key_clear ? t('undoClear') : t('clearApiKey') }}
+              </button>
+            </div>
+            <div v-if="form.dify_api_key_configured || form.dify_api_key_clear" class="config-hint">
+              <span :class="['tag', form.dify_api_key_clear ? 'warning' : 'success']">
+                {{ form.dify_api_key_clear ? t('willClear') : t('configured') }}
+              </span>
+              <span>{{ form.dify_api_key_clear ? t('apiKeyClearHint') : t('difyApiKeyConfiguredHint') }}</span>
             </div>
           </div>
         </form>
@@ -56,10 +70,24 @@
           </div>
           <div class="form-group">
             <label>{{ t('ragflowApiKey') }}</label>
-            <input v-model="form.ragflow_api_key" class="input" type="password" :placeholder="form.ragflow_api_key_configured ? t('ragflowApiKeyConfiguredPlaceholder') : t('ragflowApiKeyPlaceholder')" />
-            <div v-if="form.ragflow_api_key_configured" class="config-hint">
-              <span class="tag success">{{ t('configured') }}</span>
-              <span>{{ t('ragflowApiKeyConfiguredHint') }}</span>
+            <div class="secret-row">
+              <input
+                v-model="form.ragflow_api_key"
+                class="input"
+                type="password"
+                :disabled="form.ragflow_api_key_clear"
+                :placeholder="form.ragflow_api_key_configured ? t('ragflowApiKeyConfiguredPlaceholder') : t('ragflowApiKeyPlaceholder')"
+                @input="form.ragflow_api_key_clear = false"
+              />
+              <button v-if="form.ragflow_api_key_configured" class="btn" type="button" @click="toggleSecretClear('ragflow')">
+                {{ form.ragflow_api_key_clear ? t('undoClear') : t('clearApiKey') }}
+              </button>
+            </div>
+            <div v-if="form.ragflow_api_key_configured || form.ragflow_api_key_clear" class="config-hint">
+              <span :class="['tag', form.ragflow_api_key_clear ? 'warning' : 'success']">
+                {{ form.ragflow_api_key_clear ? t('willClear') : t('configured') }}
+              </span>
+              <span>{{ form.ragflow_api_key_clear ? t('apiKeyClearHint') : t('ragflowApiKeyConfiguredHint') }}</span>
             </div>
           </div>
           <div class="form-group">
@@ -96,13 +124,17 @@ const form = ref({
   dify_base_url: '',
   dify_api_key: '',
   dify_api_key_configured: false,
+  dify_api_key_clear: false,
   dify_timeout_seconds: 30,
   ragflow_base_url: '',
   ragflow_web_url: '',
   ragflow_api_key: '',
   ragflow_api_key_configured: false,
+  ragflow_api_key_clear: false,
   ragflow_timeout_seconds: 10,
 })
+
+const cleanSecret = (value) => (value || '').trim()
 
 const fetchConfig = async () => {
   loading.value = true
@@ -112,15 +144,26 @@ const fetchConfig = async () => {
       form.value.dify_base_url = res.data.dify_base_url || ''
       form.value.dify_api_key = ''
       form.value.dify_api_key_configured = res.data.dify_api_key_configured || false
+      form.value.dify_api_key_clear = false
       form.value.dify_timeout_seconds = res.data.dify_timeout_seconds || 30
       form.value.ragflow_base_url = res.data.ragflow_base_url || ''
       form.value.ragflow_web_url = res.data.ragflow_web_url || ''
       form.value.ragflow_api_key = ''
       form.value.ragflow_api_key_configured = res.data.ragflow_api_key_configured || false
+      form.value.ragflow_api_key_clear = false
       form.value.ragflow_timeout_seconds = res.data.ragflow_timeout_seconds || 10
     }
   } finally {
     loading.value = false
+  }
+}
+
+const toggleSecretClear = (provider) => {
+  const clearKey = `${provider}_api_key_clear`
+  const secretKey = `${provider}_api_key`
+  form.value[clearKey] = !form.value[clearKey]
+  if (form.value[clearKey]) {
+    form.value[secretKey] = ''
   }
 }
 
@@ -129,17 +172,26 @@ const saveConfig = async () => {
   try {
     const payload = {}
     if (form.value.dify_base_url !== undefined) payload.dify_base_url = form.value.dify_base_url
-    if (form.value.dify_api_key) payload.dify_api_key = form.value.dify_api_key
-    if (form.value.dify_timeout_seconds) payload.dify_timeout_seconds = form.value.dify_timeout_seconds
+    if (form.value.dify_api_key_clear) {
+      payload.dify_api_key = null
+    } else if (cleanSecret(form.value.dify_api_key)) {
+      payload.dify_api_key = cleanSecret(form.value.dify_api_key)
+    }
+    if (form.value.dify_timeout_seconds !== undefined && form.value.dify_timeout_seconds !== '') payload.dify_timeout_seconds = form.value.dify_timeout_seconds
     if (form.value.ragflow_base_url !== undefined) payload.ragflow_base_url = form.value.ragflow_base_url
     if (form.value.ragflow_web_url !== undefined) payload.ragflow_web_url = form.value.ragflow_web_url
-    if (form.value.ragflow_api_key) payload.ragflow_api_key = form.value.ragflow_api_key
-    if (form.value.ragflow_timeout_seconds) payload.ragflow_timeout_seconds = form.value.ragflow_timeout_seconds
+    if (form.value.ragflow_api_key_clear) {
+      payload.ragflow_api_key = null
+    } else if (cleanSecret(form.value.ragflow_api_key)) {
+      payload.ragflow_api_key = cleanSecret(form.value.ragflow_api_key)
+    }
+    if (form.value.ragflow_timeout_seconds !== undefined && form.value.ragflow_timeout_seconds !== '') payload.ragflow_timeout_seconds = form.value.ragflow_timeout_seconds
     await updateSystemConfig(payload)
     alert(t('saveSuccess') || '保存成功')
     fetchConfig()
   } catch (e) {
-    alert(t('saveFailed') || '保存失败')
+    const errorMessage = e.response?.data?.message || e.response?.data?.detail || e.message || t('saveFailed') || '保存失败'
+    alert(errorMessage)
   } finally {
     saving.value = false
   }
@@ -224,8 +276,25 @@ onMounted(fetchConfig)
   box-shadow: 0 0 0 3px rgba(23, 105, 224, 0.12);
 }
 
+.form-group .input:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .form-group .input::placeholder {
   color: var(--text-muted);
+  font-style: italic;
+  opacity: 0.6;
+}
+
+.form-group .input.default-value {
+  color: var(--text-muted);
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.form-group .input.default-value::placeholder {
+  opacity: 0.4;
 }
 
 .input-group {
@@ -253,6 +322,22 @@ onMounted(fetchConfig)
   background: rgba(0, 0, 0, 0.05);
   color: var(--text-muted);
   font-size: 13px;
+  white-space: nowrap;
+}
+
+.secret-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.secret-row .input {
+  min-width: 0;
+  flex: 1;
+}
+
+.secret-row .btn {
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 
@@ -299,6 +384,10 @@ onMounted(fetchConfig)
 @media (max-width: 768px) {
   .form-row {
     grid-template-columns: 1fr;
+  }
+
+  .secret-row {
+    flex-direction: column;
   }
 }
 </style>

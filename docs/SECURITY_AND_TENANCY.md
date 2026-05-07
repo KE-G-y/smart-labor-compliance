@@ -42,10 +42,12 @@
 
 后端使用 FastAPI + Uvicorn，数据库连接池配置：
 
-- `pool_size=10`
-- `max_overflow=20`
-- `pool_pre_ping=True`
-- `pool_recycle=1800`
+| 字段 | 含义 | 当前配置说明 | 调优建议 |
+| --- | --- | --- | --- |
+| `pool_size=10` | SQLAlchemy 连接池中长期保留的基础连接数。每个后端进程会维护自己的连接池。 | 单个 worker 最多常驻 10 条 MySQL 连接，适合中小并发的后台管理、问答日志、FAQ/来源查询等场景。 | 如果数据库连接数紧张可降低到 5；如果接口并发稳定较高且 MySQL 资源充足，可适当提高。 |
+| `max_overflow=20` | 基础连接用完后，允许临时额外创建的连接数。请求高峰结束后，这些临时连接会被释放。 | 单个 worker 在短时高峰下最多可使用 `10 + 20 = 30` 条连接。 | 不宜盲目调大。多 worker 部署时，理论峰值连接数约为 `workers * (pool_size + max_overflow)`，需要小于 MySQL `max_connections` 并预留运维余量。 |
+| `pool_pre_ping=True` | 每次从连接池取连接前，先检测连接是否仍可用。 | 可以避免 MySQL 主动断开空闲连接后，应用拿到失效连接导致首次请求报错。 | 建议保持开启。它会增加很小的检测开销，但能提升长时间运行服务的稳定性。 |
+| `pool_recycle=1800` | 连接在池中存活超过指定秒数后会被回收重建。 | 1800 秒等于 30 分钟，可降低 MySQL `wait_timeout`、网络中断或代理层断链造成的异常概率。 | 应设置为小于 MySQL `wait_timeout` 的值。若生产环境 MySQL 空闲超时时间更短，需要同步调小。 |
 
 部署时可使用多 worker：
 
@@ -53,7 +55,15 @@
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
 ```
 
-在 8GB 内存设备上不建议开太多 worker，优先保持 Dify/RAGFlow/MySQL 的内存余量。
+`workers` 表示 Uvicorn 启动的后端进程数量。每个 worker 都有独立的 Python 进程、数据库连接池和内存占用。开启多个 worker 可以提升多核 CPU 下的并行处理能力，也能避免单进程阻塞影响全部请求，但同时会放大数据库连接数和内存消耗。
+
+以 `--workers 2` 为例，理论数据库连接峰值约为：
+
+```text
+2 * (pool_size 10 + max_overflow 20) = 60
+```
+
+因此，在 8GB 内存设备上不建议开太多 worker，优先保持 Dify/RAGFlow/MySQL 的内存余量。当前项目本机演示或小规模验收建议使用 1-2 个 worker；正式部署时再结合 CPU 核数、MySQL 最大连接数、接口耗时和外部 Dify/RAGFlow 响应时间做压测调优。
 
 ## 6. 生产上线检查
 

@@ -196,3 +196,34 @@ def test_dify_context_inputs_match_enhanced_workflow(api_base_url):
         assert "回答正文" in prefix
         assert service._dify_file_type("政策材料.rtf", "application/rtf") == "document"
         assert service._normalize_context()["answer_style"] == "结构清晰、结论先行、引用来源、明确风险等级和待核验项"
+
+
+def test_dify_failure_returns_unavailable_provider_with_reason(api_base_url, monkeypatch):
+    import os
+
+    os.environ["DB_NAME"] = "employment_slc_auto_test"
+    from app.database import SessionLocal
+    from app.models import SystemConfig, Tenant
+    from app.services import dify_service
+    from app.services.dify_service import ComplianceAnswerService
+
+    class FailedResponse:
+        status_code = 400
+        text = '{"code":"invalid_param","message":"Workflow not published","status":400}'
+
+        def json(self):
+            return {"code": "invalid_param", "message": "Workflow not published", "status": 400}
+
+    monkeypatch.setattr(dify_service.requests, "post", lambda *args, **kwargs: FailedResponse())
+
+    with SessionLocal() as db:
+        tenant = db.query(Tenant).filter(Tenant.code == "demo-sx").first()
+        db.merge(SystemConfig(id="dify_api_key", value="app-test-key"))
+        db.flush()
+
+        service = ComplianceAnswerService(db, tenant)
+        response = service.answer("劳动仲裁收费吗？", user_id="edge-user")
+
+    assert response.provider == "dify_unavailable"
+    assert response.fallback_reason == "Dify 返回错误 400: Workflow not published"
+    assert "仲裁" in response.answer

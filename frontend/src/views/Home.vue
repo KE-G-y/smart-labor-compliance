@@ -120,6 +120,10 @@
                 <span class="tag">{{ t('provider') }}: {{ provider }}</span>
               </div>
             </div>
+            <div v-if="fallbackReason" class="engine-alert">
+              <strong>{{ t('difyFallbackTitle') }}</strong>
+              <span>{{ fallbackReason }}</span>
+            </div>
             <div class="answer-text markdown-content" v-html="renderedAnswer"></div>
 
             <div v-if="sources.length" class="subsection">
@@ -215,6 +219,7 @@ const sources = ref([])
 const tasks = ref([])
 const suggestions = ref([])
 const provider = ref('')
+const fallbackReason = ref('')
 const riskLevel = ref('medium')
 const questionId = ref(null)
 const recommended = ref([])
@@ -302,6 +307,7 @@ const clearAnswer = () => {
   tasks.value = []
   suggestions.value = []
   provider.value = ''
+  fallbackReason.value = ''
   riskLevel.value = 'medium'
   questionId.value = null
   feedbackSubmitted.value = false
@@ -318,6 +324,7 @@ const saveLastChat = () => {
     tasks: tasks.value,
     suggestions: suggestions.value,
     provider: provider.value,
+    fallbackReason: fallbackReason.value,
     riskLevel: displayedRiskLevel.value,
     questionId: questionId.value
   }))
@@ -335,6 +342,7 @@ const restoreLastChat = () => {
     tasks.value = data.tasks || []
     suggestions.value = data.suggestions || []
     provider.value = data.provider || ''
+    fallbackReason.value = data.fallbackReason || data.fallback_reason || ''
     riskLevel.value = riskFromAnswer(data.answer) || normalizeRiskLevel(data.riskLevel) || 'medium'
     questionId.value = data.questionId || null
   } catch (error) {
@@ -435,6 +443,7 @@ const submitQuestion = async () => {
     tasks.value = data.related_tasks || []
     suggestions.value = data.suggestions || []
     provider.value = data.provider || 'local_faq'
+    fallbackReason.value = data.fallback_reason || ''
     riskLevel.value = riskFromAnswer(data.answer) || normalizeRiskLevel(data.risk_level) || 'medium'
     questionId.value = data.question_id
     answeredQuestion.value = submittedQuestion
@@ -447,6 +456,7 @@ const submitQuestion = async () => {
         : error.response?.data?.message || t('systemError')
     sources.value = []
     tasks.value = []
+    fallbackReason.value = ''
     answeredQuestion.value = submittedQuestion
   } finally {
     loading.value = false
@@ -467,6 +477,7 @@ const stopGeneration = async () => {
   tasks.value = []
   suggestions.value = []
   provider.value = ''
+  fallbackReason.value = ''
   if (generationId) {
     try {
       await stopChatGeneration({
@@ -616,6 +627,25 @@ watch(contextOpen, (value) => {
 .file-pill button:hover {
   color: var(--danger);
   background: rgba(201, 54, 54, 0.08);
+}
+
+.engine-alert {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(201, 54, 54, 0.24);
+  border-radius: 8px;
+  background: rgba(201, 54, 54, 0.08);
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.engine-alert strong {
+  color: var(--danger);
 }
 
 .context-panel {

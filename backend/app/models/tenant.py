@@ -31,7 +31,6 @@ class Tenant(Base):
 
     admins = relationship("Admin", back_populates="tenant", cascade="all, delete-orphan")
     chat_logs = relationship("ChatLog", back_populates="tenant", cascade="all, delete-orphan")
-    faqs = relationship("FAQ", back_populates="tenant", cascade="all, delete-orphan")
     sources = relationship("Source", back_populates="tenant", cascade="all, delete-orphan")
     knowledge_packages = relationship("KnowledgePackage", back_populates="tenant", cascade="all, delete-orphan")
     feedbacks = relationship("Feedback", back_populates="tenant", cascade="all, delete-orphan")

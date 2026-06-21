@@ -126,6 +126,19 @@
             </div>
             <div class="answer-text markdown-content" v-html="renderedAnswer"></div>
 
+            <div v-if="answerEvaluation" class="subsection quality-section">
+              <h3>{{ t('answerQuality') }}</h3>
+              <div class="quality-summary">
+                <span :class="['tag', qualityClass(answerEvaluation.status)]">
+                  {{ t('qualityScore') }}：{{ answerEvaluation.score }} / {{ answerEvaluation.grade }}
+                </span>
+                <span>{{ qualityStatusText(answerEvaluation.status) }}</span>
+              </div>
+              <div v-if="answerEvaluation.recommendations?.length" class="quality-list">
+                <span v-for="item in answerEvaluation.recommendations.slice(0, 3)" :key="item">{{ item }}</span>
+              </div>
+            </div>
+
             <div v-if="sources.length" class="subsection">
               <h3>{{ t('sources') }}</h3>
               <div class="source-list">
@@ -218,6 +231,7 @@ const answer = ref('')
 const sources = ref([])
 const tasks = ref([])
 const suggestions = ref([])
+const answerEvaluation = ref(null)
 const provider = ref('')
 const fallbackReason = ref('')
 const riskLevel = ref('medium')
@@ -306,6 +320,7 @@ const clearAnswer = () => {
   sources.value = []
   tasks.value = []
   suggestions.value = []
+  answerEvaluation.value = null
   provider.value = ''
   fallbackReason.value = ''
   riskLevel.value = 'medium'
@@ -323,6 +338,7 @@ const saveLastChat = () => {
     sources: sources.value,
     tasks: tasks.value,
     suggestions: suggestions.value,
+    evaluation: answerEvaluation.value,
     provider: provider.value,
     fallbackReason: fallbackReason.value,
     riskLevel: displayedRiskLevel.value,
@@ -341,6 +357,7 @@ const restoreLastChat = () => {
     sources.value = data.sources || []
     tasks.value = data.tasks || []
     suggestions.value = data.suggestions || []
+    answerEvaluation.value = data.evaluation || null
     provider.value = data.provider || ''
     fallbackReason.value = data.fallbackReason || data.fallback_reason || ''
     riskLevel.value = riskFromAnswer(data.answer) || normalizeRiskLevel(data.riskLevel) || 'medium'
@@ -442,7 +459,7 @@ const submitQuestion = async () => {
     sources.value = data.sources || []
     tasks.value = data.related_tasks || []
     suggestions.value = data.suggestions || []
-    provider.value = data.provider || 'local_faq'
+    provider.value = data.provider || 'kb_no_match'
     fallbackReason.value = data.fallback_reason || ''
     riskLevel.value = riskFromAnswer(data.answer) || normalizeRiskLevel(data.risk_level) || 'medium'
     questionId.value = data.question_id
@@ -456,6 +473,7 @@ const submitQuestion = async () => {
         : error.response?.data?.message || t('systemError')
     sources.value = []
     tasks.value = []
+    answerEvaluation.value = null
     fallbackReason.value = ''
     answeredQuestion.value = submittedQuestion
   } finally {
@@ -476,6 +494,7 @@ const stopGeneration = async () => {
   sources.value = []
   tasks.value = []
   suggestions.value = []
+  answerEvaluation.value = null
   provider.value = ''
   fallbackReason.value = ''
   if (generationId) {
@@ -502,6 +521,13 @@ const sendFeedback = async (isHelpful) => {
   })
   feedbackSubmitted.value = true
   showRemark.value = false
+}
+
+const qualityClass = (status) => status === 'pass' ? 'success' : status === 'warning' ? 'warning' : 'danger'
+const qualityStatusText = (status) => {
+  if (status === 'pass') return t('qualityPass')
+  if (status === 'warning') return t('qualityWarning')
+  return t('qualityFail')
 }
 
 onMounted(() => {
@@ -874,6 +900,34 @@ watch(contextOpen, (value) => {
 
 .subsection {
   margin-top: 18px;
+}
+
+.quality-section {
+  display: grid;
+  gap: 10px;
+}
+
+.quality-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.quality-list {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.quality-list span {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
 }
 
 .source-list,

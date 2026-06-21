@@ -1,0 +1,6 @@
+# Optional dependencies for offline models under backend/models.
+# Install only when LOCAL_* model switches are enabled.
+
+torch==2.6.0
+transformers==4.57.6
+sentence-transformers==3.4.1

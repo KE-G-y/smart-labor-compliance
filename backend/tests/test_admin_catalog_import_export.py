@@ -1,84 +1,18 @@
-import csv
-import io
 import time
 
 from conftest import assert_ok, unique
 
 
-def test_faq_crud_duplicate_upsert_import_export_and_batch(client, api_base_url, tenant_headers):
-    faq_code = unique("FAQAUTO")
-    created = assert_ok(
-        client.post(
-            f"{api_base_url}/api/admin/faqs",
-            headers=tenant_headers,
-            json={
-                "faq_code": faq_code,
-                "question": f"{faq_code} 试用期工资是否能低于最低工资？",
-                "answer": "不能低于当地最低工资标准。",
-                "category": "工资",
-                "risk_level": "high",
-                "keywords": ["试用期", "最低工资"],
-            },
-            timeout=10,
-        )
-    )
-    faq_id = created["data"]["id"]
-
-    duplicate = assert_ok(
-        client.post(
-            f"{api_base_url}/api/admin/faqs",
-            headers=tenant_headers,
-            json={
-                "faq_code": faq_code,
-                "question": f"{faq_code} 试用期工资是否能低于最低工资？",
-                "answer": "重复导入时应覆盖更新。",
-                "category": "工资",
-            },
-            timeout=10,
-        )
-    )
-    assert duplicate["data"]["id"] == faq_id
-    assert "覆盖更新" in duplicate["message"]
-
-    listed = assert_ok(
-        client.get(f"{api_base_url}/api/admin/faqs", headers=tenant_headers, params={"keyword": faq_code}, timeout=10)
-    )
-    assert listed["data"]["total"] == 1
-
-    csv_body = "faq_code,question,answer,category,risk_level\nAUTO_IMPORT,自动导入FAQ问题,自动导入FAQ答案,社保,medium\n,Bad row,,,\n"
-    imported = assert_ok(
-        client.post(
-            f"{api_base_url}/api/admin/faqs/import",
-            headers=tenant_headers,
-            files={"file": ("faqs.csv", csv_body.encode("utf-8-sig"), "text/csv")},
-            timeout=10,
-        )
-    )
-    assert imported["data"]["imported"] >= 1
-    assert imported["data"]["skipped"] == 1
-
-    exported = client.get(f"{api_base_url}/api/admin/faqs/export", headers=tenant_headers, timeout=10)
-    assert exported.status_code == 200
-    rows = list(csv.DictReader(io.StringIO(exported.content.decode("utf-8-sig"))))
-    assert any(row["faq_code"] == faq_code for row in rows)
-
-    invalid_batch = client.post(
-        f"{api_base_url}/api/admin/faqs/batch",
-        headers=tenant_headers,
-        json={"ids": [faq_id], "action": "set_risk", "risk_level": "critical"},
-        timeout=10,
-    )
-    assert invalid_batch.status_code == 400
-
-    batch = assert_ok(
-        client.post(
-            f"{api_base_url}/api/admin/faqs/batch",
-            headers=tenant_headers,
-            json={"ids": [faq_id], "action": "set_risk", "risk_level": "low"},
-            timeout=10,
-        )
-    )
-    assert batch["data"]["affected"] == 1
+def test_mysql_faq_admin_routes_are_removed(client, api_base_url, tenant_headers):
+    for method, path in [
+        ("get", "/api/admin/faqs"),
+        ("post", "/api/admin/faqs"),
+        ("get", "/api/admin/faqs/export"),
+        ("post", "/api/admin/faqs/import"),
+        ("post", "/api/admin/faqs/batch"),
+    ]:
+        response = getattr(client, method)(f"{api_base_url}{path}", headers=tenant_headers, timeout=10)
+        assert response.status_code == 404
 
 
 def test_source_upload_crud_review_guards_import_export_and_batch(client, api_base_url, tenant_headers):
@@ -221,43 +155,6 @@ def test_knowledge_packages_status_import_export_batch_and_test_questions(client
 
 
 def test_admin_catalog_lists_return_newest_records_first(client, api_base_url, tenant_headers):
-    faq_prefix = unique("ORDER_FAQ")
-    first_faq = assert_ok(
-        client.post(
-            f"{api_base_url}/api/admin/faqs",
-            headers=tenant_headers,
-            json={
-                "faq_code": f"{faq_prefix}_1",
-                "question": f"{faq_prefix} 第一条排序测试问题",
-                "answer": "第一条排序测试答案",
-            },
-            timeout=10,
-        )
-    )["data"]
-    time.sleep(1)
-    second_faq = assert_ok(
-        client.post(
-            f"{api_base_url}/api/admin/faqs",
-            headers=tenant_headers,
-            json={
-                "faq_code": f"{faq_prefix}_2",
-                "question": f"{faq_prefix} 第二条排序测试问题",
-                "answer": "第二条排序测试答案",
-            },
-            timeout=10,
-        )
-    )["data"]
-
-    faqs = assert_ok(
-        client.get(
-            f"{api_base_url}/api/admin/faqs",
-            headers=tenant_headers,
-            params={"keyword": faq_prefix, "page": 1, "page_size": 10},
-            timeout=10,
-        )
-    )["data"]["list"]
-    assert [item["id"] for item in faqs[:2]] == [second_faq["id"], first_faq["id"]]
-
     source_prefix = unique("ORDER_SRC")
     first_source = assert_ok(
         client.post(

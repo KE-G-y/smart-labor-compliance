@@ -70,7 +70,6 @@ const packageColumns = computed(() => [
   { key: 'name', label: t('name'), width: '29%' },
   { key: 'region', label: t('region'), width: '88px' },
   { key: 'version', label: t('version'), width: '80px' },
-  { key: 'faq_count', label: 'FAQ', width: '64px' },
   { key: 'doc_count', label: t('sourceCount'), width: '80px' },
   { key: 'status', label: t('status'), width: '96px' },
   { key: 'action', label: t('action'), width: '88px' }

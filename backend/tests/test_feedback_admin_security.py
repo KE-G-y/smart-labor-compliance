@@ -75,7 +75,7 @@ def test_feedback_rejects_cross_tenant_or_missing_question(client, api_base_url)
 
 
 def test_admin_authentication_boundaries(client, api_base_url, tenant_headers):
-    unauthenticated = client.get(f"{api_base_url}/api/admin/faqs", timeout=10)
+    unauthenticated = client.get(f"{api_base_url}/api/admin/sources", timeout=10)
     assert unauthenticated.status_code == 401
 
     malformed = client.get(f"{api_base_url}/api/admin/verify-token", headers={"Authorization": "Bearer"}, timeout=10)
@@ -109,7 +109,7 @@ def test_tenant_admin_cannot_cross_tenant_or_create_super_admin(client, api_base
     other_tenant_id = created["data"]["id"]
 
     forbidden = client.get(
-        f"{api_base_url}/api/admin/faqs",
+        f"{api_base_url}/api/admin/sources",
         headers=tenant_headers,
         params={"tenant_id": other_tenant_id},
         timeout=10,
@@ -177,7 +177,7 @@ def test_tenant_listing_hides_dify_api_key_and_blank_update_preserves_existing_k
     assert cleared["data"]["dify_configured"] is False
 
 
-def test_viewer_role_is_read_only_for_faq_source_feedback_and_package_modules(client, api_base_url, tenant_headers):
+def test_viewer_role_is_read_only_for_source_feedback_and_package_modules(client, api_base_url, tenant_headers):
     username = unique("viewer")
     created = assert_ok(
         client.post(
@@ -201,8 +201,6 @@ def test_viewer_role_is_read_only_for_faq_source_feedback_and_package_modules(cl
     assert allowed_logs.status_code == 200
 
     forbidden_calls = [
-        ("get", "/api/admin/faqs", None),
-        ("post", "/api/admin/faqs", {"question": "viewer faq", "answer": "no"}),
         ("get", "/api/admin/sources", None),
         ("post", "/api/admin/sources", {"title": "viewer source", "url": "https://example.com"}),
         ("get", "/api/admin/feedbacks", None),

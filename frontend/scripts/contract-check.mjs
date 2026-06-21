@@ -22,10 +22,6 @@ const requiredApiContracts = [
   ['getTenants', "api.get('/admin/tenants'"],
   ['getLogs', "api.get('/admin/logs'"],
   ['getFeedbacks', "api.get('/admin/feedbacks'"],
-  ['getFaqs', "api.get('/admin/faqs'"],
-  ['importFaqs', "uploadCsv('/admin/faqs/import'"],
-  ['exportFaqs', "exportCsv('/admin/faqs/export'"],
-  ['batchFaqs', "api.post('/admin/faqs/batch'"],
   ['getSources', "api.get('/admin/sources'"],
   ['uploadSourceFile', "api.post('/admin/sources/upload'"],
   ['importSources', "uploadCsv('/admin/sources/import'"],
@@ -48,7 +44,6 @@ const requiredRoutes = [
   "path: '/admin/tenants'",
   "path: '/admin/logs'",
   "path: '/admin/feedbacks'",
-  "path: '/admin/faqs'",
   "path: '/admin/sources'",
   "path: '/admin/packages'",
   "path: '/admin/tests'",
@@ -84,4 +79,3 @@ if (failures.length) {
 }
 
 console.log(`Contract check passed: ${requiredApiContracts.length} API wrappers, ${requiredRoutes.length} routes.`)
-

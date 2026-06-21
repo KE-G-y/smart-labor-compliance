@@ -1,0 +1,253 @@
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: "${DB_PASSWORD:-infini_rag_flow}"
+      MYSQL_DATABASE: "${DB_NAME:-employment}"
+    ports:
+      - "${MYSQL_HOST_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command:
+      - etcd
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-client-urls
+      - http://0.0.0.0:2379
+      - --data-dir
+      - /etcd
+    volumes:
+      - etcd_data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio:
+    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+      MINIO_ACCESS_KEY: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+    command:
+      - minio
+      - server
+      - /minio_data
+      - --console-address
+      - ":9001"
+    ports:
+      - "${MINIO_API_HOST_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/minio_data
+    healthcheck:
+      test: ["CMD", "/usr/bin/mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  milvus:
+    image: milvusdb/milvus:v2.5.26
+    platform: "${MILVUS_PLATFORM:-linux/amd64}"
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_REGION: us-east-1
+      MINIO_ACCESS_KEY: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+    ports:
+      - "${MILVUS_HOST_PORT:-19530}:19530"
+      - "${MILVUS_WEBUI_HOST_PORT:-9091}:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 90s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: "${APP_ENV:-production}"
+      API_PREFIX: "${API_PREFIX:-/api}"
+      DB_HOST: "${DB_HOST:-mysql}"
+      DB_PORT: "${DB_PORT:-3306}"
+      DB_USER: "${DB_USER:-root}"
+      DB_PASSWORD: "${DB_PASSWORD:-infini_rag_flow}"
+      DB_NAME: "${DB_NAME:-employment}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:-change-this-before-production}"
+      JWT_EXPIRE_MINUTES: "${JWT_EXPIRE_MINUTES:-480}"
+      PASSWORD_MIN_LENGTH: "${PASSWORD_MIN_LENGTH:-8}"
+      INITIAL_ADMIN_USERNAME: "${INITIAL_ADMIN_USERNAME:-admin}"
+      INITIAL_ADMIN_PASSWORD: "${INITIAL_ADMIN_PASSWORD:-Admin@123456}"
+      DEFAULT_TENANT_CODE: "${DEFAULT_TENANT_CODE:-demo-sx}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}"
+      MAX_REQUEST_BYTES: "${MAX_REQUEST_BYTES:-1048576}"
+      MAX_UPLOAD_BYTES: "${MAX_UPLOAD_BYTES:-10485760}"
+      UPLOAD_DIR: "${UPLOAD_DIR:-storage/uploads}"
+      RATE_LIMIT_WINDOW_SECONDS: "${RATE_LIMIT_WINDOW_SECONDS:-60}"
+      RATE_LIMIT_MAX_REQUESTS: "${RATE_LIMIT_MAX_REQUESTS:-120}"
+      AUTO_SEED: "${AUTO_SEED:-true}"
+      DIFY_BASE_URL: "${DIFY_BASE_URL:-http://host.docker.internal/v1}"
+      DIFY_API_KEY: "${DIFY_API_KEY:-}"
+      DIFY_TIMEOUT_SECONDS: "${DIFY_TIMEOUT_SECONDS:-30}"
+      LANGCHAIN_BASE_URL: "${LANGCHAIN_BASE_URL:-}"
+      LANGCHAIN_API_KEY: "${LANGCHAIN_API_KEY:-}"
+      LANGCHAIN_MODEL: "${LANGCHAIN_MODEL:-gpt-4o-mini}"
+      LANGCHAIN_EMBEDDING_MODEL: "${LANGCHAIN_EMBEDDING_MODEL:-bge-m3}"
+      LANGCHAIN_TEMPERATURE: "${LANGCHAIN_TEMPERATURE:-0.2}"
+      LANGCHAIN_TIMEOUT_SECONDS: "${LANGCHAIN_TIMEOUT_SECONDS:-45}"
+      MILVUS_URI: "${MILVUS_URI:-http://milvus:19530}"
+      MILVUS_TOKEN: "${MILVUS_TOKEN:-}"
+      MILVUS_COLLECTION: "${MILVUS_COLLECTION:-slc_compliance_docs}"
+      VECTOR_TOP_K: "${VECTOR_TOP_K:-4}"
+      VECTOR_CHUNK_SIZE: "${VECTOR_CHUNK_SIZE:-500}"
+      VECTOR_CHUNK_OVERLAP: "${VECTOR_CHUNK_OVERLAP:-50}"
+      LOCAL_EMBEDDING_ENABLED: "${LOCAL_EMBEDDING_ENABLED:-true}"
+      LOCAL_EMBEDDING_MODEL_PATH: "${LOCAL_EMBEDDING_MODEL_PATH:-models/bge-m3}"
+      LOCAL_RERANKER_ENABLED: "${LOCAL_RERANKER_ENABLED:-false}"
+      LOCAL_RERANKER_MODEL_PATH: "${LOCAL_RERANKER_MODEL_PATH:-models/bge-reranker-large}"
+      LOCAL_FALLBACK_BERT_MODEL_PATH: "${LOCAL_FALLBACK_BERT_MODEL_PATH:-models/bert-base-chinese}"
+      RAGFLOW_BASE_URL: "${RAGFLOW_BASE_URL:-http://host.docker.internal:9380}"
+      RAGFLOW_WEB_URL: "${RAGFLOW_WEB_URL:-http://host.docker.internal:8880}"
+      RAGFLOW_API_KEY: "${RAGFLOW_API_KEY:-}"
+      RAGFLOW_TIMEOUT_SECONDS: "${RAGFLOW_TIMEOUT_SECONDS:-10}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${BACKEND_HOST_PORT:-8000}:8000"
+    volumes:
+      - backend_storage:/app/storage
+    depends_on:
+      mysql:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  vector-builder:
+    profiles: ["tools"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: "no"
+    command:
+      - python
+      - scripts/build_milvus_vector_db.py
+      - --manifest
+      - knowledge_base/langchain_vector_import/manifest.csv
+      - --tenant-code
+      - "${VECTOR_BUILD_TENANT_CODE:-demo-sx}"
+      - --categories
+      - "${VECTOR_BUILD_CATEGORIES:-}"
+      - --version
+      - "${VECTOR_BUILD_VERSION:-}"
+      - --base-collection
+      - "${MILVUS_BASE_COLLECTION:-slc_compliance_docs}"
+      - "${VECTOR_BUILD_ACTIVATE:---activate}"
+      - --summary-file
+      - storage/vector-build-summary.json
+    environment:
+      APP_ENV: "${APP_ENV:-production}"
+      API_PREFIX: "${API_PREFIX:-/api}"
+      DB_HOST: "${DB_HOST:-mysql}"
+      DB_PORT: "${DB_PORT:-3306}"
+      DB_USER: "${DB_USER:-root}"
+      DB_PASSWORD: "${DB_PASSWORD:-infini_rag_flow}"
+      DB_NAME: "${DB_NAME:-employment}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:-change-this-before-production}"
+      INITIAL_ADMIN_USERNAME: "${INITIAL_ADMIN_USERNAME:-admin}"
+      INITIAL_ADMIN_PASSWORD: "${INITIAL_ADMIN_PASSWORD:-Admin@123456}"
+      DEFAULT_TENANT_CODE: "${DEFAULT_TENANT_CODE:-demo-sx}"
+      AUTO_SEED: "${AUTO_SEED:-true}"
+      LANGCHAIN_BASE_URL: "${LANGCHAIN_BASE_URL:-}"
+      LANGCHAIN_API_KEY: "${LANGCHAIN_API_KEY:-}"
+      LANGCHAIN_MODEL: "${LANGCHAIN_MODEL:-gpt-4o-mini}"
+      LANGCHAIN_EMBEDDING_MODEL: "${LANGCHAIN_EMBEDDING_MODEL:-bge-m3}"
+      LANGCHAIN_TEMPERATURE: "${LANGCHAIN_TEMPERATURE:-0.2}"
+      LANGCHAIN_TIMEOUT_SECONDS: "${LANGCHAIN_TIMEOUT_SECONDS:-45}"
+      MILVUS_URI: "${MILVUS_URI:-http://milvus:19530}"
+      MILVUS_TOKEN: "${MILVUS_TOKEN:-}"
+      MILVUS_COLLECTION: "${MILVUS_COLLECTION:-slc_compliance_docs}"
+      MILVUS_BASE_COLLECTION: "${MILVUS_BASE_COLLECTION:-slc_compliance_docs}"
+      VECTOR_TOP_K: "${VECTOR_TOP_K:-4}"
+      VECTOR_CHUNK_SIZE: "${VECTOR_CHUNK_SIZE:-500}"
+      VECTOR_CHUNK_OVERLAP: "${VECTOR_CHUNK_OVERLAP:-50}"
+      LOCAL_EMBEDDING_ENABLED: "${LOCAL_EMBEDDING_ENABLED:-true}"
+      LOCAL_EMBEDDING_MODEL_PATH: "${LOCAL_EMBEDDING_MODEL_PATH:-models/bge-m3}"
+      LOCAL_RERANKER_ENABLED: "${LOCAL_RERANKER_ENABLED:-false}"
+      LOCAL_RERANKER_MODEL_PATH: "${LOCAL_RERANKER_MODEL_PATH:-models/bge-reranker-large}"
+      LOCAL_FALLBACK_BERT_MODEL_PATH: "${LOCAL_FALLBACK_BERT_MODEL_PATH:-models/bert-base-chinese}"
+    volumes:
+      - backend_storage:/app/storage
+      - ./knowledge_base:/app/knowledge_base:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_HOST_PORT:-3000}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  mysql_data:
+  etcd_data:
+  minio_data:
+  milvus_data:
+  backend_storage:

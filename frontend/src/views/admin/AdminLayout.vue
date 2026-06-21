@@ -122,8 +122,8 @@ const navItems = computed(() => [
   { to: '/admin/system-config', label: t('systemConfigTitle'), permission: 'system_config', icon: navIcon('设', 'Cfg') },
   { to: '/admin/logs', label: t('logs'), permission: 'logs', icon: navIcon('问', 'Log') },
   { to: '/admin/feedbacks', label: t('feedbacks'), permission: 'feedbacks', icon: navIcon('馈', 'Fb') },
-  { to: '/admin/faqs', label: t('faqs'), permission: 'faqs', icon: navIcon('F', 'FAQ') },
   { to: '/admin/sources', label: t('sourceManage'), permission: 'sources', icon: navIcon('源', 'Src') },
+  { to: '/admin/vector-versions', label: t('vectorVersionsTitle'), permission: 'vector_versions', icon: navIcon('版', 'Vec') },
   { to: '/admin/packages', label: t('packages'), permission: 'packages', icon: navIcon('包', 'Pkg') },
   { to: '/admin/tests', label: t('tests'), permission: 'test_questions', icon: navIcon('测', 'Tst') },
   { to: '/admin/accounts', label: t('accounts'), permission: 'admins', icon: navIcon('账', 'Acc') }

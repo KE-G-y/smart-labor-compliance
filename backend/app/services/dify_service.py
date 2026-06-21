@@ -1,4 +1,4 @@
-"""Dify 与本地 FAQ 的统一问答服务。"""
+"""Dify、LangChain 与向量知识库的统一问答服务。"""
 from __future__ import annotations
 
 import json
@@ -7,19 +7,26 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, BinaryIO, Optional, cast
 
 import requests
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import settings
-from app.models import FAQ, KnowledgePackage, Source, Tenant
+from app.models import KnowledgePackage, Source, Tenant
 from app.schemas.chat import ChatResponse, SourceInfo, TaskInfo
 from app.security import sanitize_text
-from app.services.runtime_config import get_runtime_config
+from app.services.langchain_provider import (
+    LangChainComplianceProvider,
+    LangChainPromptContext,
+    LangChainUnavailable,
+)
+from app.services.local_model_service import local_model_status
+from app.services.milvus_vector_service import MilvusVectorService, VectorStoreUnavailable
+from app.services.question_guard import QuestionGuardDecision, classify_question
+from app.services.quality_reports import build_answer_quality_report
+from app.services.runtime_config import DEFAULT_QUERY_STRATEGY, QUERY_STRATEGIES, get_runtime_config
 
 
 logger = logging.getLogger(__name__)
@@ -38,6 +45,13 @@ USER_ROLE_LABELS = {
 }
 
 DEFAULT_ANSWER_STYLE = "结构清晰、结论先行、引用来源、明确风险等级和待核验项"
+QUERY_STRATEGY_ORDER = {
+    "langchain_first": ("langchain", "dify"),
+    "dify_first": ("dify", "langchain"),
+    "langchain_only": ("langchain",),
+    "dify_only": ("dify",),
+    "vector_only": (),
+}
 CONTEXT_FIELD_LIMITS = {
     "answer_style": 600,
     "user_goal": 160,
@@ -61,7 +75,11 @@ _generation_tasks_lock = threading.Lock()
 
 @dataclass
 class ChatAttachment:
-    """待转交给 Dify 的用户附件。"""
+    """待转交给 Dify 的用户附件。
+
+    当前项目的 LangChain 链路只处理文本问答；带文件的问题仍交给 Dify，
+    因为 Dify 工作流更适合做文件解析、节点编排和流式返回。
+    """
 
     filename: str
     content_type: str
@@ -69,13 +87,21 @@ class ChatAttachment:
 
 
 class ComplianceAnswerService:
-    """先尝试 Dify，失败或未配置时回退到本地 FAQ。"""
+    """按管理员策略编排 LangChain、Dify 与向量知识库边界。
+
+    可以把这个类理解成“问答总调度员”：
+    1. 先判断问题是否太简单或不在系统范围内。
+    2. 系统内问题必须先从 Milvus 找到知识库证据。
+    3. 根据管理员配置选择 LangChain 或 Dify 生成答案。
+    4. 生成后补充质量评估，方便前端和运营人员复核。
+    """
 
     def __init__(self, db: Session, tenant: Tenant):
         self.db = db
         self.tenant = tenant
         self.runtime_config = get_runtime_config(db)
         self.last_dify_error: Optional[str] = None
+        self.last_langchain_error: Optional[str] = None
 
     def _get_dify_base_url(self) -> str:
         return self.runtime_config.dify_base_url
@@ -101,8 +127,56 @@ class ComplianceAnswerService:
         known_facts: Optional[str] = None,
         verification_focus: Optional[str] = None,
     ) -> ChatResponse:
+        # 业务入口只负责“生成答案 + 生成质量报告”。真正的路由判断在 _answer_core，
+        # 这样前端拿到的每个回答都有同一套 evaluation 字段。
+        response = self._answer_core(
+            question=question,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            language=language,
+            user_role=user_role,
+            province=province,
+            city=city,
+            attachment=attachment,
+            generation_id=generation_id,
+            answer_style=answer_style,
+            user_goal=user_goal,
+            urgency_level=urgency_level,
+            output_format=output_format,
+            known_facts=known_facts,
+            verification_focus=verification_focus,
+        )
+        response.evaluation = build_answer_quality_report(
+            question=question,
+            answer=response.answer,
+            sources=response.sources,
+            provider=response.provider,
+            risk_level=response.risk_level,
+            fallback_reason=response.fallback_reason,
+        ).model_dump()
+        return response
+
+    def _answer_core(
+        self,
+        question: str,
+        user_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        language: str = "zh-CN",
+        user_role: str = "employee",
+        province: str = "陕西省",
+        city: str = "西安市",
+        attachment: Optional[ChatAttachment] = None,
+        generation_id: Optional[str] = None,
+        answer_style: Optional[str] = None,
+        user_goal: Optional[str] = None,
+        urgency_level: Optional[str] = None,
+        output_format: Optional[str] = None,
+        known_facts: Optional[str] = None,
+        verification_focus: Optional[str] = None,
+    ) -> ChatResponse:
         question = sanitize_text(question) or ""
         self.last_dify_error = None
+        self.last_langchain_error = None
         context = self._normalize_context(
             answer_style=answer_style,
             user_goal=user_goal,
@@ -112,6 +186,23 @@ class ComplianceAnswerService:
             verification_focus=verification_focus,
         )
         start_time = int(time.time() * 1000)
+        # 第一道门：问候、感谢、能力询问等简单问题直接返回固定话术；
+        # 高风险且系统外的问题也在这里挡住，避免模型自由发挥。
+        guard_decision = classify_question(question)
+        if attachment is not None and guard_decision.should_short_circuit and guard_decision.category != "high_risk_out_of_scope":
+            guard_decision = QuestionGuardDecision(category="domain", should_short_circuit=False)
+        if guard_decision.should_short_circuit:
+            return self._guardrail_response(
+                guard_decision,
+                start_time=start_time,
+                user_role=user_role,
+                province=province,
+                city=city,
+                context=context,
+            )
+
+        # 知识包相当于“当前租户是否允许使用知识库”的总开关。
+        # 停用时不继续调用 Milvus、LangChain 或 Dify，避免误用旧资料。
         if not self._has_active_package():
             response = ChatResponse(
                 answer=self._with_context_prefix(
@@ -131,32 +222,91 @@ class ComplianceAnswerService:
             )
             return response
 
+        # 系统内问题必须有知识库证据。没有命中 Milvus 时直接提示补充资料，
+        # 不让模型基于常识猜法规、金额、时限或办理入口。
+        if guard_decision.category == "domain" and attachment is None and not self._has_knowledge_evidence(question, language):
+            return self._knowledge_base_no_match_response(
+                question,
+                start_time=start_time,
+                user_role=user_role,
+                province=province,
+                city=city,
+                context=context,
+            )
+
         tenant_dify_key_value = getattr(self.tenant, "dify_api_key", None)
         tenant_dify_key = str(tenant_dify_key_value).strip() if tenant_dify_key_value is not None else ""
         dify_key = tenant_dify_key or self.runtime_config.dify_api_key
-        attempted_dify = dify_key != ""
-        if attempted_dify:
-            dify_response = self._call_dify(
-                question,
-                dify_key,
-                user_id,
-                conversation_id,
-                user_role,
-                province,
-                city,
-                attachment,
-                generation_id,
-                context,
-            )
-            if dify_response:
-                dify_response.response_time = int(time.time() * 1000) - start_time
-                return dify_response
+        langchain_key = self.runtime_config.langchain_api_key
+        provider_order = self._query_provider_order(attachment=attachment)
+        attempted_langchain = False
+        attempted_dify = False
+        is_domain_question = guard_decision.category == "domain"
 
+        # provider_order 来自后台“查询方案”：LangChain 优先、Dify 优先、
+        # 仅 LangChain、仅 Dify，或 vector_only。循环按顺序尝试，可用就返回。
+        for provider_name in provider_order:
+            if provider_name == "langchain":
+                if not langchain_key:
+                    continue
+                attempted_langchain = True
+                langchain_response = self._call_langchain(
+                    question,
+                    user_id,
+                    conversation_id,
+                    language,
+                    user_role,
+                    province,
+                    city,
+                    context,
+                )
+                if langchain_response:
+                    langchain_response.response_time = int(time.time() * 1000) - start_time
+                    return langchain_response
+                continue
+
+            if provider_name == "dify":
+                if not dify_key:
+                    continue
+                attempted_dify = True
+                dify_response = self._call_dify(
+                    question,
+                    dify_key,
+                    user_id,
+                    conversation_id,
+                    user_role,
+                    province,
+                    city,
+                    attachment,
+                    generation_id,
+                    context,
+                    require_sources=is_domain_question and attachment is None,
+                )
+                if dify_response:
+                    dify_response.response_time = int(time.time() * 1000) - start_time
+                    return dify_response
+
+        # 附件场景只能走 Dify。如果 Dify 被策略禁用或调用失败，就明确告诉用户，
+        # 不能悄悄改用本地解析或普通文本问答。
         if attachment:
+            strategy = self._query_strategy()
+            if "dify" not in provider_order:
+                answer = (
+                    "已收到附件，但当前管理员配置的查询方案不允许调用 Dify 文件解析链路。"
+                    "系统不会绕过该策略处理附件内容，请联系管理员切换为 Dify 相关查询方案后重试。"
+                )
+                provider = "provider_disabled"
+                fallback_reason = f"query_strategy={strategy}"
+            else:
+                answer = (
+                    "已收到附件，但文件内容解析必须由 Dify 完成。当前 Dify 未配置或调用失败，"
+                    "系统未对附件内容进行本地解析，请检查 Dify 应用密钥、文件上传能力和工作流配置后重试。"
+                )
+                provider = "dify_unavailable"
+                fallback_reason = self.last_dify_error
             return ChatResponse(
                 answer=self._with_context_prefix(
-                    "已收到附件，但文件内容解析必须由 Dify 完成。当前 Dify 未配置或调用失败，"
-                    "系统未对附件内容进行本地解析，请检查 Dify 应用密钥、文件上传能力和工作流配置后重试。",
+                    answer,
                     user_role,
                     province,
                     city,
@@ -165,22 +315,167 @@ class ComplianceAnswerService:
                 sources=None,
                 related_tasks=[],
                 response_time=int(time.time() * 1000) - start_time,
-                provider="dify_unavailable",
+                provider=provider,
+                fallback_reason=fallback_reason,
                 risk_level=self._estimate_risk(question),
                 suggestions=[],
                 disclaimer=DISCLAIMER,
             )
 
-        local_response = self._answer_from_faq(question, language)
-        if attempted_dify:
-            local_response.provider = "dify_unavailable"
-            local_response.fallback_reason = self.last_dify_error or "Dify 调用失败，已回退到本地 FAQ"
+        # 所有外部生成链路都不可用时，落到知识库边界提示。
+        # 对系统内问题，allow_fallback=False，仍然不能编造答案。
+        local_response = self._knowledge_boundary_fallback(
+            question,
+            language,
+            allow_fallback=not is_domain_question,
+        )
+        if attempted_langchain:
+            if local_response.provider != "kb_no_match":
+                local_response.provider = "langchain_unavailable"
+            reasons = [self.last_langchain_error or "LangChain 调用失败"]
+            if attempted_dify and self.last_dify_error:
+                reasons.append(self.last_dify_error)
+            local_response.fallback_reason = "；".join(reasons)
+        elif attempted_dify:
+            if local_response.provider != "kb_no_match":
+                local_response.provider = "dify_unavailable"
+            local_response.fallback_reason = self.last_dify_error or "Dify 调用失败"
         local_response.answer = self._with_context_prefix(local_response.answer, user_role, province, city, context)
         local_response.response_time = int(time.time() * 1000) - start_time
         return local_response
 
+    def _query_strategy(self) -> str:
+        """读取管理员配置的查询方案，异常值回到默认策略。"""
+        strategy = str(getattr(self.runtime_config, "query_strategy", DEFAULT_QUERY_STRATEGY) or DEFAULT_QUERY_STRATEGY)
+        return strategy if strategy in QUERY_STRATEGIES else DEFAULT_QUERY_STRATEGY
+
+    def _query_provider_order(self, attachment: Optional[ChatAttachment] = None) -> tuple[str, ...]:
+        """把查询方案翻译成实际调用顺序。附件问题只允许 Dify 处理。"""
+        order = QUERY_STRATEGY_ORDER[self._query_strategy()]
+        if attachment is not None:
+            return tuple(provider for provider in order if provider == "dify")
+        return order
+
+    def _set_langchain_error(self, message: str) -> None:
+        self.last_langchain_error = sanitize_text(message) or message
+
     def _set_dify_error(self, message: str) -> None:
         self.last_dify_error = sanitize_text(message) or message
+
+    def _call_langchain(
+        self,
+        question: str,
+        user_id: Optional[str],
+        conversation_id: Optional[str],
+        language: str,
+        user_role: str,
+        province: str,
+        city: str,
+        context: Optional[dict[str, str]] = None,
+    ) -> Optional[ChatResponse]:
+        # LangChain 不是自己存知识库，它只负责“把检索到的知识片段放进 Prompt，
+        # 再调用 OpenAI-compatible 模型”。知识片段来自 _build_langchain_source_context。
+        provider = LangChainComplianceProvider(
+            api_key=self.runtime_config.langchain_api_key,
+            model=self.runtime_config.langchain_model,
+            base_url=self.runtime_config.langchain_base_url,
+            temperature=self.runtime_config.langchain_temperature,
+            timeout_seconds=self.runtime_config.langchain_timeout_seconds,
+        )
+        if not provider.configured:
+            return None
+
+        try:
+            source_context, source_infos = self._build_langchain_source_context(question, language)
+            # PromptContext 是喂给模板的数据包：问题、租户、地区、用户角色、
+            # 回答风格和 Milvus 检索片段都在这里统一整理。
+            prompt_context = LangChainPromptContext(
+                question=question,
+                language=language,
+                tenant_code=self.tenant.code,
+                tenant_name=self.tenant.name,
+                region=self._region_label(province, city),
+                province=province,
+                city=city,
+                user_role=USER_ROLE_LABELS.get(user_role, user_role),
+                answer_style=(context or {}).get("answer_style") or DEFAULT_ANSWER_STYLE,
+                context_notes=self._format_context_notes(context),
+                source_context=source_context,
+                disclaimer=DISCLAIMER,
+            )
+            answer = self._normalize_answer(provider.answer(prompt_context))
+            return ChatResponse(
+                answer=answer,
+                sources=source_infos or None,
+                related_tasks=self._extract_tasks(question),
+                response_time=0,
+                conversation_id=conversation_id,
+                question_id=None,
+                provider="langchain",
+                risk_level=self._risk_from_answer(answer) or self._estimate_risk(question),
+                suggestions=self._suggestions(question),
+                disclaimer=DISCLAIMER,
+            )
+        except LangChainUnavailable as exc:
+            self._set_langchain_error(str(exc))
+            logger.warning(
+                "LangChain chat request failed; falling back to next provider. user_id=%s model=%s error=%s",
+                user_id or "anonymous",
+                self.runtime_config.langchain_model,
+                exc,
+            )
+            return None
+
+    def _guardrail_response(
+        self,
+        decision: QuestionGuardDecision,
+        *,
+        start_time: int,
+        user_role: str,
+        province: str,
+        city: str,
+        context: Optional[dict[str, str]] = None,
+    ) -> ChatResponse:
+        return ChatResponse(
+            answer=self._with_context_prefix(decision.answer, user_role, province, city, context),
+            sources=None,
+            related_tasks=[],
+            response_time=int(time.time() * 1000) - start_time,
+            provider=decision.provider,
+            fallback_reason=decision.fallback_reason,
+            risk_level=decision.risk_level,
+            suggestions=decision.suggestions,
+            disclaimer=DISCLAIMER,
+        )
+
+    def _knowledge_base_no_match_response(
+        self,
+        question: str,
+        *,
+        start_time: int,
+        user_role: str,
+        province: str,
+        city: str,
+        context: Optional[dict[str, str]] = None,
+    ) -> ChatResponse:
+        answer = (
+            "当前知识库未检索到足够明确的依据，系统不会基于外部常识或模型猜测生成合规结论。\n"
+            "请补充更具体的地区、员工身份、时间节点或业务事实后重试；也可由管理员先上传并审核相关政策、"
+            "企业制度或 FAQ 后再发起问答。\n\n"
+            "风险等级：{risk}\n"
+            "待核验项：请以已入库的官方政策、当地人社/医保/税务经办口径和企业制度为准。"
+        ).format(risk=self._estimate_risk(question))
+        return ChatResponse(
+            answer=self._with_context_prefix(answer, user_role, province, city, context),
+            sources=None,
+            related_tasks=[],
+            response_time=int(time.time() * 1000) - start_time,
+            provider="kb_no_match",
+            fallback_reason="knowledge_base_no_match",
+            risk_level=self._estimate_risk(question),
+            suggestions=self._suggestions(question),
+            disclaimer=DISCLAIMER,
+        )
 
     def _dify_error_from_response(self, response: requests.Response) -> str:
         try:
@@ -213,8 +508,11 @@ class ComplianceAnswerService:
         attachment: Optional[ChatAttachment] = None,
         generation_id: Optional[str] = None,
         context: Optional[dict[str, str]] = None,
+        require_sources: bool = False,
     ) -> Optional[ChatResponse]:
         try:
+            # Dify 仍保留为兼容回退：它接收同样的租户/地区/上下文字段，
+            # 但具体检索和生成由 Dify 工作流决定。
             payload = {
                 "query": question,
                 "user": user_id or "anonymous",
@@ -226,7 +524,7 @@ class ComplianceAnswerService:
             if attachment:
                 upload_file_id = self._upload_file_to_dify(api_key, user_id, attachment)
                 if not upload_file_id:
-                    logger.warning("Dify file upload failed; falling back to local FAQ. filename=%s", attachment.filename)
+                    logger.warning("Dify file upload failed; falling back to knowledge boundary response. filename=%s", attachment.filename)
                     return None
                 payload["files"] = [
                     {
@@ -246,7 +544,7 @@ class ComplianceAnswerService:
             if response.status_code != 200:
                 self._set_dify_error(self._dify_error_from_response(response))
                 logger.warning(
-                    "Dify chat request failed; falling back to local FAQ. status=%s body=%s",
+                    "Dify chat request failed; falling back to knowledge boundary response. status=%s body=%s",
                     response.status_code,
                     response.text[:1000],
                 )
@@ -255,7 +553,7 @@ class ComplianceAnswerService:
             data = self._consume_dify_stream(response, generation_id, api_key, user_id or "anonymous")
             if not data:
                 if not self.last_dify_error:
-                    self._set_dify_error("Dify 未返回有效回答，已回退到本地 FAQ")
+                    self._set_dify_error("Dify 未返回有效回答，已回退到知识库边界响应")
                 return None
 
             metadata = data.get("metadata") or {}
@@ -268,6 +566,12 @@ class ComplianceAnswerService:
                         snippet=(resource.get("content") or "")[:220],
                     )
                 )
+            if require_sources and not sources:
+                # 系统内问题必须有检索来源。Dify 若没有返回 retriever_resources，
+                # 就认为它没有给出可追溯证据，拒绝使用该回答。
+                self._set_dify_error("Dify 未返回知识库来源，已拒绝非知识库回答")
+                logger.warning("Dify answer rejected because no retriever resources were returned for a domain question.")
+                return None
             answer = self._normalize_answer(data.get("answer") or "")
             return ChatResponse(
                 answer=answer,
@@ -284,7 +588,7 @@ class ComplianceAnswerService:
         except requests.Timeout as exc:
             self._set_dify_error(f"Dify 请求超时: {exc}")
             logger.warning(
-                "Dify chat request timed out after %ss; falling back to local FAQ. url=%s error=%s",
+                "Dify chat request timed out after %ss; falling back to knowledge boundary response. url=%s error=%s",
                 self._get_dify_timeout_seconds(),
                 f"{self._get_dify_base_url().rstrip('/')}/chat-messages",
                 exc,
@@ -292,7 +596,7 @@ class ComplianceAnswerService:
             return None
         except requests.RequestException as exc:
             self._set_dify_error(f"Dify 请求失败: {exc}")
-            logger.warning("Dify chat request failed; falling back to local FAQ. error=%s", exc)
+            logger.warning("Dify chat request failed; falling back to knowledge boundary response. error=%s", exc)
             return None
         finally:
             if generation_id:
@@ -305,6 +609,7 @@ class ComplianceAnswerService:
         api_key: str,
         user_id: str,
     ) -> Optional[dict]:
+        """把 Dify 的 SSE 流式响应拼成一个普通 dict，方便后续统一处理。"""
         answer_parts: list[str] = []
         final_data: dict = {}
         metadata: dict = {}
@@ -480,20 +785,36 @@ class ComplianceAnswerService:
             return "document"
         return "custom"
 
-    def _answer_from_faq(self, question: str, language: str) -> ChatResponse:
-        faq = self._best_faq_match(question, language)
-        if faq:
-            faq_obj = cast(Any, faq)
-            answer = self._normalize_answer(str(faq_obj.answer or ""))
-            source_ids = faq_obj.source_ids if isinstance(faq_obj.source_ids, list) else []
-            source_infos = self._source_infos(source_ids)
+    def _knowledge_boundary_fallback(self, question: str, language: str, allow_fallback: bool = True) -> ChatResponse:
+        """生成“知识库边界”回复。
+
+        allow_fallback=False 表示这是系统内合规问题，哪怕外部模型不可用，
+        也只能返回已检索片段或提示补充资料，不能使用外部常识兜底。
+        """
+        if not allow_fallback:
+            vector_sources = self._vector_source_infos(question)
+            if vector_sources:
+                answer = (
+                    "已检索到知识库片段，但当前生成链路不可用，系统暂不能生成可复核的合规结论。\n"
+                    "请稍后重试，或先查看返回的知识库来源片段；管理员可检查 LangChain/Dify 配置和模型服务状态。\n\n"
+                    f"风险等级：{self._estimate_risk(question)}\n"
+                    "待核验项：仅以返回的知识库片段和官方经办口径为准，不使用外部常识补充结论。"
+                )
+            else:
+                answer = (
+                    "当前知识库未检索到足够明确的依据，系统不会基于外部常识或模型猜测生成合规结论。\n"
+                    "请补充更具体的地区、员工身份、时间节点或业务事实后重试，或由管理员先上传并审核相关资料。\n\n"
+                    f"风险等级：{self._estimate_risk(question)}\n"
+                    "待核验项：请以已入库知识库和当地官方经办口径为准。"
+                )
             return ChatResponse(
                 answer=answer,
-                sources=source_infos or None,
-                related_tasks=self._extract_tasks(question),
+                sources=vector_sources or None,
+                related_tasks=[],
                 response_time=0,
-                provider="local_faq",
-                risk_level=str(faq_obj.risk_level or "medium"),
+                provider="kb_no_match",
+                fallback_reason="knowledge_base_generation_unavailable",
+                risk_level=self._estimate_risk(question),
                 suggestions=self._suggestions(question),
                 disclaimer=DISCLAIMER,
             )
@@ -503,39 +824,16 @@ class ComplianceAnswerService:
             sources=self._source_infos([]) or None,
             related_tasks=self._extract_tasks(question),
             response_time=0,
-            provider="local_faq",
+            provider="kb_no_match",
+            fallback_reason="external_provider_unavailable",
             risk_level=self._estimate_risk(question),
             suggestions=self._suggestions(question),
             disclaimer=DISCLAIMER,
         )
 
-    def _best_faq_match(self, question: str, language: str) -> Optional[FAQ]:
-        keyword = f"%{question[:80]}%"
-        candidates = (
-            self.db.query(FAQ)
-            .filter(FAQ.tenant_id == self.tenant.id)
-            .filter(or_(FAQ.language == language, FAQ.language == "zh-CN"))
-            .filter(or_(FAQ.question.like(keyword), FAQ.answer.like(keyword), FAQ.category.like(keyword)))
-            .limit(20)
-            .all()
-        )
-
-        if not candidates:
-            candidates = self.db.query(FAQ).filter(FAQ.tenant_id == self.tenant.id).all()
-
-        best_score = 0.0
-        best = None
-        normalized_question = question.lower()
-        for faq_item in candidates:
-            faq = cast(Any, faq_item)
-            terms = [faq.question, *(faq.aliases or []), *(faq.keywords or [])]
-            score = max(SequenceMatcher(None, normalized_question, term.lower()).ratio() for term in terms if term)
-            if any(term and term in question for term in terms):
-                score += 0.35
-            if score > best_score:
-                best_score = score
-                best = faq
-        return best if best_score >= 0.18 else None
+    def _has_knowledge_evidence(self, question: str, language: str) -> bool:
+        """判断系统内问题是否能在 Milvus 找到证据。"""
+        return bool(self._vector_source_infos(question))
 
     def _source_infos(self, source_ids: list[int]) -> list[SourceInfo]:
         if not self._has_active_package():
@@ -609,6 +907,90 @@ class ComplianceAnswerService:
                 context[key] = cleaned[:limit]
         return context
 
+    def _region_label(self, province: str, city: str) -> str:
+        return f"{province}{city}" if province and city else (province or city or self.tenant.region)
+
+    def _format_context_notes(self, context: Optional[dict[str, str]] = None) -> str:
+        lines = []
+        for key in ("user_goal", "urgency_level", "output_format", "known_facts", "verification_focus"):
+            value = (context or {}).get(key)
+            if value:
+                lines.append(f"{CONTEXT_FIELD_LABELS[key]}：{value}")
+        return "\n".join(lines) if lines else "无额外补充信息。"
+
+    def _build_langchain_source_context(self, question: str, language: str) -> tuple[str, list[SourceInfo]]:
+        """把 Milvus 检索结果整理成 LLM 能读懂的上下文文本。
+
+        返回两个东西：
+        - source_context：放进 Prompt 的文字证据。
+        - source_infos：返回给前端展示的来源列表。
+        """
+        lines = []
+        source_infos: list[SourceInfo] = []
+        catalog_source_infos: list[SourceInfo] = []
+        vector_sources = self._vector_source_infos(question)
+        if vector_sources:
+            # Milvus 来源是最可信的问答依据，FAQ 与普通文档会在标题里区分。
+            lines.append(
+                "\n\n".join(
+                    [
+                        "\n".join(
+                            [
+                                f"Milvus 检索片段 {index}（{self._source_type_label(source)}）：{source.title}",
+                                f"摘要：{source.snippet or '未提供'}",
+                            ]
+                        )
+                        for index, source in enumerate(vector_sources, start=1)
+                    ]
+                )
+            )
+            source_infos.extend(vector_sources)
+
+        if not source_infos:
+            # 没有向量片段时，只把来源目录作为兜底展示信息。
+            # 注意：系统内问题在前面已经要求必须命中 Milvus，所以这里不会用目录编造结论。
+            catalog_source_infos = self._source_infos([])
+            source_infos = catalog_source_infos
+
+        for index, source in enumerate(catalog_source_infos[:6], start=1):
+            lines.append(
+                "\n".join(
+                    [
+                        f"来源 {index}：{source.title}",
+                        f"链接：{source.url or '未提供'}",
+                        f"摘要：{source.snippet or '未提供'}",
+                    ]
+                )
+            )
+
+        if not lines:
+            lines.append("当前租户没有可用于本次问题的已启用向量知识库片段或来源目录。")
+
+        return "\n\n".join(lines), source_infos
+
+    def _source_type_label(self, source: SourceInfo) -> str:
+        if source.source_type == "faq" or source.title.startswith("[FAQ]"):
+            return "FAQ 标准问答"
+        return "知识库文档"
+
+    def _vector_source_infos(self, question: str) -> list[SourceInfo]:
+        """调用 Milvus 做相似度检索，失败时返回空列表让上层走边界提示。"""
+        service = MilvusVectorService(self.runtime_config)
+        if not service.configured:
+            return []
+        try:
+            return service.similarity_search(
+                question,
+                tenant_id=self.tenant.id,
+                tenant_code=self.tenant.code,
+            )
+        except VectorStoreUnavailable as exc:
+            logger.warning("Milvus vector search unavailable; continuing without vector context. error=%s", exc)
+            return []
+        except Exception as exc:
+            logger.warning("Milvus vector search failed; continuing without vector context. error=%s", exc)
+            return []
+
     def _build_dify_inputs(
         self,
         user_role: str,
@@ -666,11 +1048,11 @@ class ComplianceAnswerService:
     def _fallback_answer(self, question: str) -> str:
         risk = self._estimate_risk(question)
         return (
-            "当前问题未命中已复核 FAQ，系统已按通用合规口径给出处理建议：\n"
+            "当前问题未命中足够明确的向量知识库依据，系统无法生成可复核的合规结论。\n"
             "1. 先确认适用地区、时间口径、员工身份、合同和企业制度版本。\n"
-            "2. 涉及工资、社保、医保、假期、仲裁等事项时，应引用官方政策或经办规则，避免只凭经验答复。\n"
+            "2. 请由管理员先将 FAQ、官方政策或企业制度作为知识库文档解析入 Milvus，并完成复核后再提问。\n"
             "3. 对包含身份证号、手机号、银行卡号等个人信息的材料，应先脱敏再进入知识库或日志。\n"
-            f"4. 本问题初步风险等级为：{risk}。建议由 HR 或法务复核后再对外确认。"
+            f"4. 本问题初步风险等级为：{risk}。系统不会基于 MySQL FAQ 或外部常识补充结论。"
         )
 
     def _estimate_risk(self, question: str) -> str:
@@ -732,6 +1114,23 @@ def check_external_services() -> dict:
         db.close()
 
     services = {
+        "langchain": {
+            "name": "LangChain",
+            "url": runtime_config.langchain_base_url or "OpenAI-compatible default",
+            "configured": bool(
+                runtime_config.local_embedding_enabled
+                or (runtime_config.langchain_api_key and runtime_config.langchain_model)
+            ),
+            "model": runtime_config.langchain_model,
+            "embedding_model": runtime_config.langchain_embedding_model,
+            "local_embedding_enabled": runtime_config.local_embedding_enabled,
+        },
+        "milvus": {
+            "name": "Milvus",
+            "url": runtime_config.milvus_uri,
+            "configured": bool(runtime_config.milvus_uri and runtime_config.milvus_collection),
+            "collection": runtime_config.milvus_collection,
+        },
         "dify": {
             "name": "Dify",
             "url": runtime_config.dify_base_url,
@@ -744,6 +1143,29 @@ def check_external_services() -> dict:
         },
     }
     for key, item in services.items():
+        if key == "milvus":
+            if not item["configured"]:
+                item["online"] = None
+                item["status_code"] = None
+                continue
+            try:
+                from pymilvus import MilvusClient
+
+                client_kwargs: dict[str, Any] = {"uri": runtime_config.milvus_uri}
+                if runtime_config.milvus_token:
+                    client_kwargs["token"] = runtime_config.milvus_token
+                client = MilvusClient(**client_kwargs)
+                item["online"] = client.has_collection(runtime_config.milvus_collection)
+                item["status_code"] = 200 if item["online"] else 404
+            except Exception as exc:
+                logger.warning("Milvus status probe failed. uri=%s collection=%s error=%s", runtime_config.milvus_uri, runtime_config.milvus_collection, exc)
+                item["online"] = False
+                item["status_code"] = None
+            continue
+        if key == "langchain" and (not item["configured"] or not runtime_config.langchain_base_url):
+            item["online"] = None
+            item["status_code"] = None
+            continue
         probe_url = item["url"]
         try:
             response = requests.get(probe_url, timeout=3)
@@ -752,4 +1174,5 @@ def check_external_services() -> dict:
         except requests.RequestException:
             item["online"] = False
             item["status_code"] = None
+    services["local_models"] = local_model_status(runtime_config)
     return services

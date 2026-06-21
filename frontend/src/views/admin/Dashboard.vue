@@ -30,8 +30,8 @@
                 <strong>{{ service.name }}</strong>
                 <div class="muted">{{ service.url }}</div>
               </div>
-              <span :class="['tag', service.online ? 'success' : 'danger']">
-                {{ service.online ? 'online' : 'offline' }}
+              <span :class="['tag', serviceStatusClass(service)]">
+                {{ serviceStatusText(service) }}
               </span>
             </div>
           </div>
@@ -76,6 +76,18 @@ const topQuestionColumns = computed(() => [
   { key: 'question', label: t('question') },
   { key: 'count', label: '', width: '48px', align: 'center' }
 ])
+
+const serviceStatusClass = (service) => {
+  if (service.online === true) return 'success'
+  if (service.online === false) return 'danger'
+  return service.configured ? 'warning' : 'muted'
+}
+
+const serviceStatusText = (service) => {
+  if (service.online === true) return 'online'
+  if (service.online === false) return 'offline'
+  return service.configured ? 'configured' : 'not configured'
+}
 
 const fetchStats = async () => {
   loading.value = true

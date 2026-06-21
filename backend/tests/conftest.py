@@ -28,6 +28,7 @@ os.environ.setdefault("DB_PASSWORD", DB_PASSWORD)
 os.environ.setdefault("DB_NAME", TEST_DB_NAME)
 os.environ.setdefault("AUTO_SEED", "true")
 os.environ.setdefault("DIFY_API_KEY", "")
+os.environ.setdefault("LANGCHAIN_API_KEY", "")
 os.environ.setdefault("RAGFLOW_API_KEY", "")
 os.environ.setdefault("RATE_LIMIT_MAX_REQUESTS", "10000")
 os.environ.setdefault("MAX_REQUEST_BYTES", "8192")
@@ -67,6 +68,7 @@ def api_base_url():
             "DB_NAME": TEST_DB_NAME,
             "AUTO_SEED": "true",
             "DIFY_API_KEY": "",
+            "LANGCHAIN_API_KEY": "",
             "RAGFLOW_API_KEY": "",
             "RATE_LIMIT_MAX_REQUESTS": "10000",
             "MAX_REQUEST_BYTES": "8192",

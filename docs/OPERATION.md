@@ -21,7 +21,7 @@
 
 以下命令默认从项目根目录执行。
 
-启动前请确认本机 MySQL 已可访问，默认连接 `127.0.0.1:3306/employment`。一键启动会依次启动后端 API 与前端 Vite 开发服务，并将 PID 与日志写入本项目目录：
+一键启动会自动准备 `backend/.env`，并在本机 Docker 可用时启动本地开发依赖 `mysql`、`etcd`、`minio`、`milvus`。随后脚本会依次启动后端 API 与前端 Vite 开发服务，并将 PID 与日志写入本项目目录：
 
 ```bash
 ./scripts/start_project.sh
@@ -49,7 +49,7 @@
 
 ```bash
 # 指定 Python 解释器，适合本机存在多个 Python/Conda 环境时使用
-PYTHON_BIN=/path/to/python ./scripts/start_project.sh
+PYTHON_BIN=python3 ./scripts/start_project.sh
 
 # 跳过依赖自动安装，只做依赖检查与启动
 INSTALL_DEPS=0 ./scripts/start_project.sh
@@ -59,7 +59,48 @@ BACKEND_PORT=8001 FRONTEND_PORT=3001 ./scripts/start_project.sh
 
 # 开启后端热重载；如果文件监听权限受限，可去掉该变量使用默认稳定启动
 BACKEND_RELOAD=1 ./scripts/start_project.sh
+
+# 只启动前后端，不自动启动 MySQL/Milvus 等 Docker 依赖
+START_LOCAL_SERVICES=0 ./scripts/start_project.sh
 ```
+
+### LangChain/Milvus 参数从哪里来
+
+本地开发读取 `backend/.env`；Docker Compose 部署读取项目根目录 `.env`。首次本地启动时，如果 `backend/.env` 不存在，脚本会从 `backend/.env.example` 生成。
+
+| 参数 | 本地推荐值 | 数据来源 |
+| --- | --- | --- |
+| `LANGCHAIN_API_KEY` | 手动填写 | 从 OpenAI 或 OpenAI-compatible 模型服务商控制台创建 API Key。项目不能自动生成。 |
+| `LANGCHAIN_BASE_URL` | 留空或服务商地址 | 使用 OpenAI 官方端点时可留空；使用代理、私有模型网关、国内模型服务时填写服务商提供的 Base URL。 |
+| `LANGCHAIN_MODEL` | `gpt-4o-mini` | 模型服务商支持的 chat model 名称。 |
+| `LANGCHAIN_EMBEDDING_MODEL` | `bge-m3` | Embedding 模型标识；启用本地模型时，文档入库和检索使用 `LOCAL_EMBEDDING_MODEL_PATH` 指向的 bge-m3。 |
+| `MILVUS_URI` | `http://127.0.0.1:19530` | 本地一键脚本通过 Docker Compose 启动 Milvus 后暴露的地址。Docker 容器内部使用 `http://milvus:19530`。 |
+| `MILVUS_TOKEN` | 留空 | 本地 Milvus standalone 默认不需要；Zilliz Cloud 或开启鉴权的 Milvus 才需要。 |
+| `MILVUS_COLLECTION` | `slc_compliance_docs` | 项目默认基础 collection 名称；向量库版本构建会生成并激活版本化 collection。 |
+| `VECTOR_CHUNK_SIZE` / `VECTOR_CHUNK_OVERLAP` | `1000` / `150` | 项目默认切分参数，可按文档长度和检索效果调优。 |
+
+如果只想先看后台和基础页面，可以暂时不填 `LANGCHAIN_API_KEY`。此时登录、租户、来源、日志等基础功能仍可运行，但 LangChain 问答、Embedding 和文档向量入库不可用。
+
+### backend/models 本地模型使用
+
+项目会最大程度优先使用 `backend/models/` 中已经准备好的离线模型。它们不会替代 MySQL 或 Milvus，而是减少 Embedding、重排和问题分类对外部模型服务的依赖。
+
+| 模型目录 | 默认配置 | 用途 |
+| --- | --- | --- |
+| `backend/models/bge-m3` | `LOCAL_EMBEDDING_ENABLED=true`、`LOCAL_EMBEDDING_MODEL_PATH=models/bge-m3` | 文档入库和问题检索的本地 Embedding。启用后，Milvus 写入/检索优先用它生成向量。 |
+| `backend/models/bge-reranker-large` | `LOCAL_RERANKER_ENABLED=true`、`LOCAL_RERANKER_MODEL_PATH=models/bge-reranker-large` | 对 Milvus 召回片段做二次排序，提高最相关片段进入 Prompt 的概率。 |
+| `backend/models/bert-base-chinese` | `LOCAL_FALLBACK_BERT_MODEL_PATH=models/bert-base-chinese` | 中文 BERT 基础模型备用路径，当前不作为问题分类器使用。 |
+
+启用本地模型需要额外安装可选依赖：
+
+```bash
+cd backend
+python -m pip install -r requirements-local-models.txt
+```
+
+一键启动脚本发现 `backend/.env` 中存在 `LOCAL_*_ENABLED=true` 时，也会尝试自动安装 `requirements-local-models.txt`。如果依赖未安装或模型目录不可用，后端会记录日志并按配置回退；基础后台不会因此无法启动。问题分类只走后端确定性规则，不加载本地分类模型。
+
+Docker 镜像默认不复制 4GB+ 的本地模型文件，也默认关闭 `LOCAL_*` 开关。需要在 Docker 中启用时，建议通过 volume 挂载模型目录，并在根目录 `.env` 中把对应 `LOCAL_*_ENABLED` 改为 `true`。
 
 ## 4. 手工启动步骤
 
@@ -103,16 +144,16 @@ npm run dev
 
 ## 7. Dify 与 RAGFlow 接入
 
-当前项目按“可配置接入 + 本地 FAQ 兜底”实现：
+当前项目按“可配置接入 + Milvus 知识库边界控制”实现：
 
 - 后台概览会探测 Dify 与 RAGFlow 在线状态
 - 配置 `DIFY_API_KEY` 后，问答优先调用 Dify Chat API
 - 本机 Dify + RAGFlow 检索链路可能超过 30 秒，建议在 `.env` 中设置 `DIFY_TIMEOUT_SECONDS=60`
-- 未配置 Dify API Key 或调用失败时，系统使用本租户 FAQ 和来源目录生成兜底回答
+- 未配置 Dify API Key 或调用失败时，系统不会读取 MySQL FAQ 兜底；系统内问题必须依赖 Milvus 知识库片段
 - RAGFlow 当前作为知识库建设和资料整理辅助服务，后台记录 Web/API 地址与数据集映射字段
-- 用户端“补充信息”会向 Dify 传入 `user_goal`、`urgency_level`、`output_format`、`known_facts`、`verification_focus` 和 `answer_style`，用于稳定分类、检索和回答格式；这些字段同样会进入本地 FAQ 兜底前缀，便于人工复核上下文。
-- 当前增强版 Dify DSL 文件为 `/Users/yaoyao/Desktop/企业用工与社保合规智能助手.yml`，导入 Dify 后需确认开始节点变量与 `docs/DIFY_RAGFLOW_GUIDE.md` 的输入表一致。
-- 如果 Dify 以 Docker 容器运行并需要访问宿主机上的 RAGFlow，不要在 Dify 外部知识库 API 中使用本机临时局域网 IP。建议配置为 `http://host.docker.internal:8880/api/v1/dify`，否则容器内检索节点可能访问超时，后端会回退到本地 FAQ。
+- 用户端“补充信息”会向 Dify 传入 `user_goal`、`urgency_level`、`output_format`、`known_facts`、`verification_focus` 和 `answer_style`，用于稳定分类、检索和回答格式；这些字段同样会进入知识库边界提示，便于人工复核上下文。
+- 如需导入增强版 Dify DSL，建议将文件放在仓库 `docs/企业用工与社保合规智能助手.yml`，导入后需确认开始节点变量与 `docs/DIFY_RAGFLOW_GUIDE.md` 的输入表一致。
+- 如果 Dify 以 Docker 容器运行并需要访问宿主机上的 RAGFlow，不要在 Dify 外部知识库 API 中使用本机临时局域网 IP。建议配置为 `http://host.docker.internal:8880/api/v1/dify`，否则容器内检索节点可能访问超时，后端会回退到知识库边界提示。
 
 Dify 工作流建议输出结构：
 
@@ -142,8 +183,8 @@ Dify 工作流建议输出结构：
 
 - 1 个演示租户：`demo-sx / 陕西演示企业`
 - 2 个管理员账号
-- 21 条来源目录
-- 30 条 FAQ
+- 来源目录
+- FAQ 由知识库资料整理脚本生成并通过 Milvus 向量版本管理
 - 1 个陕西用工与社保合规知识包
 - 4 条验收测试问题
 

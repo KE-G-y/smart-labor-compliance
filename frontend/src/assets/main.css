@@ -594,7 +594,7 @@ a {
 .app-table-wrap {
   min-height: 0;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: rgba(102, 112, 133, 0.35) transparent;

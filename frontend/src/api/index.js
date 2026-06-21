@@ -101,20 +101,16 @@ export const updateTenant = (id, data) => api.put(`/admin/tenants/${id}`, data)
 
 export const getSystemConfig = () => api.get('/admin/system-config')
 export const updateSystemConfig = (data) => api.put('/admin/system-config', data)
+// 向量版本相关接口：MySQL 保存版本记录，Milvus 保存每个版本对应的 collection。
+export const getVectorVersions = (params) => api.get('/admin/vector-versions', { params })
+export const activateVectorVersion = (id, data = {}) => api.put(`/admin/vector-versions/${id}/activate`, data)
+export const archiveVectorVersion = (id, data = {}) => api.put(`/admin/vector-versions/${id}/archive`, data)
 
 export const getLogs = (params) => api.get('/admin/logs', { params })
 export const getLogDetail = (id) => api.get(`/admin/logs/${id}`)
 
 export const getFeedbacks = (params) => api.get('/admin/feedbacks', { params })
 export const updateFeedbackStatus = (id, data) => api.put(`/admin/feedbacks/${id}`, data)
-
-export const getFaqs = (params) => api.get('/admin/faqs', { params })
-export const addFaq = (data, params = {}) => api.post('/admin/faqs', data, { params })
-export const updateFaq = (id, data) => api.put(`/admin/faqs/${id}`, data)
-export const deleteFaq = (id) => api.delete(`/admin/faqs/${id}`)
-export const importFaqs = (file, params = {}) => uploadCsv('/admin/faqs/import', file, params)
-export const exportFaqs = (params = {}) => exportCsv('/admin/faqs/export', params, 'faqs.csv')
-export const batchFaqs = (data) => api.post('/admin/faqs/batch', data)
 
 export const getSources = (params) => api.get('/admin/sources', { params })
 export const addSource = (data, params = {}) => api.post('/admin/sources', data, { params })
@@ -124,6 +120,17 @@ export const uploadSourceFile = (file, params = {}) => {
   const formData = new FormData()
   formData.append('file', file)
   return api.post('/admin/sources/upload', formData, { params })
+}
+export const uploadVectorDocument = (file, data = {}, params = {}) => {
+  // 文档解析入库必须用 FormData：文件本体 + 可选标题一起发给后端。
+  const formData = new FormData()
+  Object.entries(data).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      formData.append(key, value)
+    }
+  })
+  formData.append('file', file)
+  return api.post('/admin/vector-documents/upload', formData, { params })
 }
 export const deleteSource = (id) => api.delete(`/admin/sources/${id}`)
 export const importSources = (file, params = {}) => uploadCsv('/admin/sources/import', file, params)

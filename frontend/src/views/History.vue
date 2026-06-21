@@ -220,9 +220,14 @@ const statusOptions = computed(() => [
 ])
 const providerOptions = computed(() => [
   { value: '', label: t('allProviders') },
+  { value: 'langchain', label: 'LangChain' },
   { value: 'dify', label: 'Dify' },
   { value: 'local_faq', label: t('localFaq') },
+  { value: 'precheck', label: t('precheckProvider') },
+  { value: 'kb_no_match', label: t('knowledgeBaseNoMatch') },
+  { value: 'langchain_unavailable', label: t('langchainUnavailable') },
   { value: 'dify_unavailable', label: t('difyUnavailable') },
+  { value: 'provider_disabled', label: t('providerDisabled') },
   { value: 'knowledge_package_disabled', label: t('knowledgePackageDisabled') }
 ])
 

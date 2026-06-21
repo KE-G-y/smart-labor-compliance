@@ -17,6 +17,7 @@ logs/
 # Runtime files
 .run/
 backend/storage/
+docker-compose.override.yml
 
 # Temporary files
 *.tmp
@@ -38,3 +39,5 @@ env/
 
 # Node modules (already handled in frontend)
 node_modules/
+
+models/

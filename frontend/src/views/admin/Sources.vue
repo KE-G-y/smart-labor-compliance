@@ -1,6 +1,56 @@
 <template>
   <AdminLayout :title="t('sourcesTitle')" :subtitle="t('sourcesSubtitle')">
     <div class="grid">
+      <section class="panel vector-panel">
+        <div class="section-title">
+          <h2>{{ t('vectorDocumentUpload') }}</h2>
+          <div class="toolbar">
+            <button class="btn" :disabled="vectorUploading" @click="resetVectorUpload">{{ t('clear') }}</button>
+          </div>
+        </div>
+        <div class="vector-upload-grid">
+          <div class="form-group">
+            <label>{{ t('title') }}</label>
+            <input v-model.trim="vectorTitle" class="input" :placeholder="t('vectorTitlePlaceholder')" />
+          </div>
+          <div class="vector-upload-box">
+            <div class="source-upload-main">
+              <span class="source-upload-icon">↑</span>
+              <div class="source-upload-copy">
+                <strong>{{ vectorFile?.name || t('noFileSelected') }}</strong>
+                <span>{{ vectorStatusText }}</span>
+              </div>
+            </div>
+            <div class="source-upload-actions">
+              <label class="btn source-file-picker">
+                {{ t('selectFile') }}
+                <input type="file" accept=".txt,.md,.markdown,.csv,.html,.htm,.pdf,.docx,.xlsx" @change="handleVectorFileChange" />
+              </label>
+              <button class="btn primary" type="button" :disabled="!vectorFile || vectorUploading" @click="uploadVectorFile">
+                {{ vectorUploading ? t('loading') : t('parseAndIndex') }}
+              </button>
+            </div>
+          </div>
+          <div v-if="vectorError" class="form-error">{{ vectorError }}</div>
+          <div v-if="vectorResult" class="vector-result">
+            <span>{{ t('indexedChunks') }}：{{ vectorResult.chunks }}</span>
+            <span>{{ t('parsedCharacters') }}：{{ vectorResult.characters }}</span>
+            <span>{{ t('milvusCollection') }}：{{ vectorResult.collection }}</span>
+          </div>
+          <div v-if="vectorResult?.quality_report" class="vector-quality">
+            <div class="vector-quality-summary">
+              <span :class="['tag', qualityClass(vectorResult.quality_report.status)]">
+                {{ t('ingestQualityReport') }}：{{ vectorResult.quality_report.score }} / {{ vectorResult.quality_report.grade }}
+              </span>
+              <span>{{ qualityStatusText(vectorResult.quality_report.status) }}</span>
+            </div>
+            <div v-if="vectorResult.quality_report.recommendations?.length" class="vector-quality-list">
+              <span v-for="item in vectorResult.quality_report.recommendations.slice(0, 3)" :key="item">{{ item }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="panel">
         <div class="section-title">
           <h2>{{ t('sourceList') }}</h2>
@@ -207,7 +257,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { addSource, batchSources, deleteSource, exportSources, getSources, importSources, reviewSource, updateSource, uploadSourceFile } from '@/api'
+import { addSource, batchSources, deleteSource, exportSources, getSources, importSources, reviewSource, updateSource, uploadSourceFile, uploadVectorDocument } from '@/api'
 import { useI18n } from '@/i18n'
 import AppPagination from '@/components/AppPagination.vue'
 import AppSelect from '@/components/AppSelect.vue'
@@ -232,6 +282,11 @@ const uploadedFileName = ref('')
 const uploading = ref(false)
 const loading = ref(false)
 const formError = ref('')
+const vectorFile = ref(null)
+const vectorTitle = ref('')
+const vectorUploading = ref(false)
+const vectorResult = ref(null)
+const vectorError = ref('')
 const initialForm = () => ({ title: '', url: '', local_file: '', doc_type: '', issuer: '', region: t('defaultRegion'), description: '', validity_status: '有效', review_status: '待人工复核' })
 const form = ref(initialForm())
 const withCurrentOption = (options, value) => {
@@ -284,6 +339,13 @@ const uploadStatusText = computed(() => {
   if (uploadedFileName.value) return t('fileUploaded')
   if (selectedFile.value) return t('fileReadyToUpload')
   return t('fileUploadHint')
+})
+const vectorStatusText = computed(() => {
+  // 这个状态只描述“向量入库面板”的生命周期，与下面来源目录 CRUD 分开。
+  if (vectorUploading.value) return t('vectorIndexing')
+  if (vectorResult.value) return t('vectorIndexed')
+  if (vectorFile.value) return t('vectorReadyToIndex')
+  return t('vectorFileHint')
 })
 
 const fetchSources = async () => {
@@ -430,6 +492,41 @@ const uploadSelectedFile = async () => {
     uploading.value = false
   }
 }
+const handleVectorFileChange = (event) => {
+  vectorFile.value = event.target.files?.[0] || null
+  vectorResult.value = null
+  vectorError.value = ''
+}
+const resetVectorUpload = () => {
+  vectorFile.value = null
+  vectorTitle.value = ''
+  vectorUploading.value = false
+  vectorResult.value = null
+  vectorError.value = ''
+}
+const uploadVectorFile = async () => {
+  if (!vectorFile.value) return
+  vectorUploading.value = true
+  vectorError.value = ''
+  vectorResult.value = null
+  try {
+    // 调用后端 /admin/vector-documents/upload。
+    // 后端会解析文件、切分 chunk、写入 Milvus，并返回入库质量报告。
+    const res = await uploadVectorDocument(vectorFile.value, { title: vectorTitle.value })
+    vectorResult.value = res.data
+  } catch (error) {
+    vectorError.value = error.response?.data?.message || error.response?.data?.detail || t('vectorIndexFailed')
+  } finally {
+    vectorUploading.value = false
+  }
+}
+
+const qualityClass = (status) => status === 'pass' ? 'success' : status === 'warning' ? 'warning' : 'danger'
+const qualityStatusText = (status) => {
+  if (status === 'pass') return t('qualityPass')
+  if (status === 'warning') return t('qualityWarning')
+  return t('qualityFail')
+}
 
 const isReviewed = (value) => value === '已复核' || value === 'reviewed'
 const reviewLabel = (value) => isReviewed(value) ? t('reviewed') : t('pendingManualReview')
@@ -441,6 +538,70 @@ onMounted(fetchSources)
 <style scoped>
 .source-modal {
   width: min(860px, calc(100vw - 32px));
+}
+
+.vector-panel {
+  flex-shrink: 0;
+}
+
+.vector-upload-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.vector-upload-box {
+  min-height: 96px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--surface-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.vector-result {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.vector-result span {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+}
+
+.vector-quality {
+  display: grid;
+  gap: 8px;
+}
+
+.vector-quality-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.vector-quality-list {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.vector-quality-list span {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
 }
 
 .source-description {

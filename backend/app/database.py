@@ -6,12 +6,12 @@
 """
 import json
 from functools import lru_cache
-from typing import List
+from typing import Annotated, List
 from urllib.parse import quote_plus
 
 import pymysql
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, NoDecode
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     initial_admin_password: str = "Admin@123456"
     default_tenant_code: str = "demo-sx"
 
-    cors_origins: List[str] = Field(
+    cors_origins: Annotated[List[str], NoDecode] = Field(
         default_factory=lambda: [
             "http://localhost:5173",
             "http://127.0.0.1:5173",
@@ -56,6 +56,26 @@ class Settings(BaseSettings):
     dify_api_key: str = ""
     dify_timeout_seconds: int = 30
 
+    langchain_base_url: str = ""
+    langchain_api_key: str = ""
+    langchain_model: str = "gpt-4o-mini"
+    langchain_embedding_model: str = "bge-m3"
+    langchain_temperature: float = 0.2
+    langchain_timeout_seconds: int = 45
+
+    milvus_uri: str = "http://127.0.0.1:19530"
+    milvus_token: str = ""
+    milvus_collection: str = "slc_compliance_docs"
+    vector_search_mode: str = "hybrid"
+    vector_top_k: int = 4
+    vector_chunk_size: int = 500
+    vector_chunk_overlap: int = 50
+    local_embedding_enabled: bool = True
+    local_embedding_model_path: str = "models/bge-m3"
+    local_reranker_enabled: bool = True
+    local_reranker_model_path: str = "models/bge-reranker-large"
+    local_fallback_bert_model_path: str = "models/bert-base-chinese"
+
     ragflow_base_url: str = "http://127.0.0.1:9380"
     ragflow_web_url: str = "http://127.0.0.1:8880"
     ragflow_api_key: str = ""
@@ -73,6 +93,11 @@ class Settings(BaseSettings):
     @classmethod
     def parse_cors_origins(cls, value):
         if isinstance(value, str):
+            text = value.strip()
+            if text.startswith("["):
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
@@ -111,8 +136,6 @@ def create_database_if_not_exists() -> None:
         connection.close()
 
 
-create_database_if_not_exists()
-
 DATABASE_URL = (
     f"mysql+pymysql://{quote_plus(settings.db_user)}:{quote_plus(settings.db_password)}"
     f"@{settings.db_host}:{settings.db_port}/{settings.db_name}?charset=utf8mb4"
@@ -143,15 +166,17 @@ def get_db():
 
 def init_db() -> None:
     """初始化表结构与演示数据。"""
+    create_database_if_not_exists()
+
     from app.models import (
         admin,
         chat_log,
         feedback,
-        faq,
         knowledge_package,
         source,
         tenant,
         test_question,
+        vector_version,
     )
 
     Base.metadata.create_all(bind=engine)
@@ -233,8 +258,43 @@ def ensure_compat_columns() -> None:
             """))
             connection.execute(text("ALTER TABLE slc_sources MODIFY issuer VARCHAR(120) NOT NULL DEFAULT ''"))
     add_missing_indexes("slc_sources", {"ix_slc_sources_source_code": "(source_code)"})
-    add_missing_columns("slc_faqs", {"faq_code": "faq_code VARCHAR(40) NULL AFTER tenant_id"})
-    add_missing_indexes("slc_faqs", {"ix_slc_faqs_faq_code": "(faq_code)"})
+    add_missing_columns("slc_chat_logs", {"evaluation": "evaluation JSON NULL AFTER risk_level"})
+    add_missing_columns(
+        "slc_vector_collection_versions",
+        {
+            "display_name": "display_name VARCHAR(160) NULL AFTER collection_name",
+            "description": "description TEXT NULL AFTER display_name",
+            "manifest_path": "manifest_path VARCHAR(500) NULL AFTER description",
+            "manifest_sha256": "manifest_sha256 VARCHAR(64) NULL AFTER manifest_path",
+            "categories": "categories JSON NULL AFTER manifest_sha256",
+            "embedding_model": "embedding_model VARCHAR(120) NULL AFTER categories",
+            "chunk_size": "chunk_size INT NULL AFTER embedding_model",
+            "chunk_overlap": "chunk_overlap INT NULL AFTER chunk_size",
+            "document_count": "document_count INT NOT NULL DEFAULT 0 AFTER chunk_overlap",
+            "indexed_count": "indexed_count INT NOT NULL DEFAULT 0 AFTER document_count",
+            "failed_count": "failed_count INT NOT NULL DEFAULT 0 AFTER indexed_count",
+            "chunk_count": "chunk_count INT NOT NULL DEFAULT 0 AFTER failed_count",
+            "status": "status VARCHAR(30) NOT NULL DEFAULT 'building' AFTER chunk_count",
+            "is_active": "is_active TINYINT(1) NOT NULL DEFAULT 0 AFTER status",
+            "build_summary": "build_summary JSON NULL AFTER is_active",
+            "build_started_at": "build_started_at DATETIME NULL AFTER build_summary",
+            "build_finished_at": "build_finished_at DATETIME NULL AFTER build_started_at",
+            "activated_at": "activated_at DATETIME NULL AFTER build_finished_at",
+            "activated_by": "activated_by VARCHAR(80) NULL AFTER activated_at",
+            "created_by": "created_by VARCHAR(80) NULL AFTER activated_by",
+            "created_at": "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER created_by",
+            "updated_at": "updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at",
+        },
+    )
+    add_missing_indexes(
+        "slc_vector_collection_versions",
+        {
+            "ix_slc_vector_collection_versions_tenant_id": "(tenant_id)",
+            "ix_slc_vector_collection_versions_collection_name": "(collection_name)",
+            "ix_slc_vector_collection_versions_status": "(status)",
+            "ix_slc_vector_collection_versions_is_active": "(is_active)",
+        },
+    )
     deduplicate_business_data()
     add_missing_unique_indexes(
         "slc_sources",
@@ -245,30 +305,20 @@ def ensure_compat_columns() -> None:
         },
     )
     add_missing_unique_indexes(
-        "slc_faqs",
+        "slc_vector_collection_versions",
         {
-            "uq_slc_faqs_tenant_faq_code": "(tenant_id, faq_code)",
-            "uq_slc_faqs_tenant_language_question": "(tenant_id, language, question)",
+            "uq_slc_vector_versions_tenant_version": "(tenant_id, version)",
+            "uq_slc_vector_versions_tenant_collection": "(tenant_id, collection_name)",
         },
     )
 
 
 def deduplicate_business_data() -> None:
-    """清理历史重复来源与 FAQ，只保留每组最早记录。"""
+    """清理历史重复来源，只保留每组最早记录。"""
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
-    if "slc_sources" not in tables and "slc_faqs" not in tables:
+    if "slc_sources" not in tables:
         return
-
-    def parse_json_ids(value) -> list:
-        if not value:
-            return []
-        if isinstance(value, list):
-            return value
-        try:
-            return json.loads(value)
-        except (TypeError, json.JSONDecodeError):
-            return []
 
     def resolved_source_id(source_id: int, duplicate_map: dict[int, int]) -> int:
         current = source_id
@@ -307,49 +357,6 @@ def deduplicate_business_data() -> None:
                 if duplicate_id != resolved_source_id(keep_id, duplicate_map)
             }
 
-            if duplicate_map and "slc_faqs" in tables:
-                faq_rows = connection.execute(text("""
-                    SELECT id, source_ids
-                    FROM slc_faqs
-                    WHERE source_ids IS NOT NULL
-                """)).mappings().all()
-                for row in faq_rows:
-                    raw_ids = parse_json_ids(row["source_ids"])
-                    normalized_ids = []
-                    changed = False
-                    for raw_id in raw_ids:
-                        try:
-                            source_id = int(raw_id)
-                        except (TypeError, ValueError):
-                            continue
-                        normalized_id = duplicate_map.get(source_id, source_id)
-                        changed = changed or normalized_id != source_id
-                        if normalized_id not in normalized_ids:
-                            normalized_ids.append(normalized_id)
-                    if changed:
-                        connection.execute(
-                            text("UPDATE slc_faqs SET source_ids = :source_ids WHERE id = :id"),
-                            {"source_ids": json.dumps(normalized_ids, ensure_ascii=False), "id": row["id"]},
-                        )
-
             if duplicate_map:
                 delete_ids = ",".join(str(source_id) for source_id in sorted(duplicate_map))
                 connection.execute(text(f"DELETE FROM slc_sources WHERE id IN ({delete_ids})"))
-
-        if "slc_faqs" in tables:
-            connection.execute(text("""
-                DELETE f FROM slc_faqs f
-                JOIN slc_faqs kept
-                  ON f.tenant_id = kept.tenant_id
-                 AND f.faq_code = kept.faq_code
-                 AND f.id > kept.id
-                WHERE f.faq_code IS NOT NULL AND f.faq_code <> ''
-            """))
-            connection.execute(text("""
-                DELETE f FROM slc_faqs f
-                JOIN slc_faqs kept
-                  ON f.tenant_id = kept.tenant_id
-                 AND f.language = kept.language
-                 AND f.question = kept.question
-                 AND f.id > kept.id
-            """))

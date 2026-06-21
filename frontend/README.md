@@ -30,7 +30,6 @@ npm run dev
 - `/admin/login`：管理后台登录
 - `/admin`：统计、Dify/RAGFlow 在线状态
 - `/admin/tenants`：租户管理
-- `/admin/faqs`：FAQ 管理
 - `/admin/sources`：来源管理
 - `/admin/logs`：问答日志
 - `/admin/feedbacks`：反馈管理

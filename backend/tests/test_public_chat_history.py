@@ -42,7 +42,7 @@ def test_chat_sanitizes_sensitive_data_and_persists_history(client, api_base_url
     )
     data = payload["data"]
     assert data["question_id"]
-    assert data["provider"] in {"local_faq", "knowledge_package_disabled", "dify_unavailable"}
+    assert data["provider"] in {"kb_no_match", "knowledge_package_disabled", "dify_unavailable"}
     assert "适用角色：企业HR" in data["answer"]
 
     history = assert_ok(client.get(f"{api_base_url}/api/history", params={"user_id": user_id}, timeout=10))
@@ -78,7 +78,7 @@ def test_chat_accepts_enhanced_context_fields(client, api_base_url):
         )
     )
     answer = payload["data"]["answer"]
-    assert payload["data"]["provider"] in {"local_faq", "knowledge_package_disabled", "dify_unavailable"}
+    assert payload["data"]["provider"] in {"kb_no_match", "knowledge_package_disabled", "dify_unavailable"}
     assert "适用角色：企业HR" in answer
     assert "问题目标：风险评估" in answer
     assert "紧急程度：今天需要处理" in answer

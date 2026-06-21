@@ -3,14 +3,29 @@
 """
 dependencies = [
     "fastapi",
+    "starlette",
     "uvicorn",
     "sqlalchemy",
+    "pymysql",
     "pydantic",
     "pydantic_settings",
-    "python_jose",
+    "jose",
     "passlib",
-    "python_multipart",
-    "requests"
+    "multipart",
+    "requests",
+    "httpx",
+    "langchain_core",
+    "langchain_openai",
+    "langchain_milvus",
+    "langchain_text_splitters",
+    "pymilvus",
+    "torch",
+    "transformers",
+    "sentence_transformers",
+    "sentencepiece",
+    "pypdf",
+    "docx",
+    "openpyxl"
 ]
 
 for dep in dependencies:

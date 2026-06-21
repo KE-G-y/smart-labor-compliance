@@ -1,6 +1,6 @@
 <template>
   <div class="app-table-wrap" :class="wrapClass">
-    <table class="app-table" :class="tableClass">
+    <table class="app-table" :class="tableClass" :style="tableStyle">
       <colgroup>
         <col
           v-for="column in resolvedColumns"
@@ -126,6 +126,7 @@ const wrapClass = computed(() => [
 const tableClass = computed(() => [
   props.dense ? 'app-table-dense' : ''
 ])
+const tableStyle = computed(() => props.minWidth ? { minWidth: props.minWidth } : null)
 
 const getValue = (row, key) => String(key).split('.').reduce((value, part) => value?.[part], row)
 

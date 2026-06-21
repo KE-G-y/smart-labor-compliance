@@ -13,8 +13,8 @@
 - 反馈闭环：`/api/feedback`、`/api/admin/feedbacks`、反馈状态更新。
 - 管理端认证：登录、令牌校验、角色权限、越权访问。
 - 多租户：用户端租户解析、后台 `tenant_id` 强制过滤、租户管理员跨租户禁止。
-- 知识运营：FAQ、来源目录、知识包、测试问题列表。
-- 导入导出：FAQ/来源/知识包 CSV 导入导出、无效文件、缺字段、重复数据覆盖。
+- 知识运营：来源目录、知识包、向量版本、测试问题列表。
+- 导入导出：来源/知识包 CSV 导入导出、无效文件、缺字段、重复数据覆盖；FAQ 管理接口已移除，FAQ 通过向量资料入库。
 - 安全边界：敏感信息脱敏、请求体大小限制、上传文件扩展名和路径安全、只读角色写操作禁止。
 
 ### 2.2 前端契约
@@ -29,7 +29,7 @@
 
 - 后端：FastAPI + SQLAlchemy + MySQL。
 - 数据库：自动化测试使用专用数据库 `employment_slc_auto_test`，运行前后自动删除。
-- 外部 AI：测试环境默认不配置 Dify/RAGFlow API Key，验证本地 FAQ 兜底链路。
+- 外部 AI：测试环境默认不配置 Dify/RAGFlow API Key，验证知识库边界与降级链路。
 - 前端：Node + Vite，执行契约检查和生产构建。
 
 ## 4. 自动化脚本
@@ -63,12 +63,12 @@ npm run build
 - 目标：验证新增测试脚本是否可稳定启动测试服务，识别代码真实缺陷与测试脚本偏差。
 - 结果：后端 `16` 个用例中 `13` 个通过、`3` 个失败；前端尚未进入执行。
 - 发现：
-  - FAQ 列表的 `keyword` 仅检索 `question`，无法按 `faq_code` 搜到刚创建的数据。
-  - `viewer` 角色可读取 FAQ、来源、反馈、知识包和测试问题，不符合“只读人员仅概览与日志”的权限设计。
+  - FAQ 管理已从 MySQL 后台移除，相关旧用例应改为验证接口不可用。
+  - `viewer` 角色可读取来源、反馈、知识包和测试问题，不符合“只读人员仅概览与日志”的权限设计。
   - 超长问题测试使用中文字符时先触发请求体大小限制，未进入 Pydantic 长度校验。
 - 修改：
-  - FAQ 搜索扩展为 `question` + `faq_code`。
-  - 后台 FAQ、来源、反馈、知识包、测试问题读写接口补充模块权限校验。
+  - FAQ 后台 CRUD 不再作为验收目标，FAQ 改由向量知识库资料管理。
+  - 后台来源、反馈、知识包、测试问题读写接口补充模块权限校验。
   - 超长问题用例改用 ASCII 字符，稳定验证 `max_length=3000`。
 
 ### 第二轮
@@ -95,12 +95,12 @@ npm run build
 
 | 文档要求 | 覆盖脚本 | 覆盖点 |
 | --- | --- | --- |
-| 智能问答、FAQ 兜底、问答日志 | `backend/tests/test_public_chat_history.py` | 成功问答、空问题、超长问题、历史查询、CSV 导出、清空历史 |
+| 智能问答、知识库边界、问答日志 | `backend/tests/test_public_chat_history.py` | 成功问答、空问题、超长问题、历史查询、CSV 导出、清空历史 |
 | 敏感信息脱敏 | `backend/tests/test_public_chat_history.py`、`backend/tests/test_feedback_admin_security.py` | 身份证、手机号、邮箱写库前脱敏 |
 | 多租户隔离 | `backend/tests/test_feedback_admin_security.py` | 租户管理员不能访问其他租户数据 |
 | 后台认证和角色 | `backend/tests/test_feedback_admin_security.py` | 未登录、错误登录、无效授权头、viewer 只读 |
 | 反馈闭环 | `backend/tests/test_feedback_admin_security.py` | 提交反馈、后台筛选、状态更新、无效状态 |
-| FAQ/来源/知识包运营 | `backend/tests/test_admin_catalog_import_export.py` | CRUD、CSV 导入导出、批量操作、重复覆盖、复核锁定 |
+| 来源/知识包运营 | `backend/tests/test_admin_catalog_import_export.py` | 来源 CRUD、CSV 导入导出、批量操作、重复覆盖、复核锁定；FAQ 管理接口移除 |
 | 上传安全 | `backend/tests/test_admin_catalog_import_export.py` | 非法扩展名、路径归一化、上传大小限制 |
 | 请求体限制和安全响应头 | `backend/tests/test_request_guard_and_helpers.py` | 413、`X-Frame-Options`、`Cache-Control` 等 |
 | Dify 与知识包边界 | `backend/tests/test_service_and_tenant_edges.py` | 禁用知识包短路、Dify streaming 解析、停止生成任务清理 |

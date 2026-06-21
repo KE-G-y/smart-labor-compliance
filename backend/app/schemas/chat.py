@@ -37,6 +37,7 @@ class SourceInfo(BaseModel):
     title: str
     url: Optional[str] = None
     snippet: Optional[str] = None
+    source_type: Optional[str] = None
 
 
 class TaskInfo(BaseModel):
@@ -54,11 +55,12 @@ class ChatResponse(BaseModel):
     response_time: int
     conversation_id: Optional[str] = None
     question_id: Optional[int] = None
-    provider: str = "local_faq"
+    provider: str = "kb_no_match"
     fallback_reason: Optional[str] = None
     risk_level: str = "medium"
     suggestions: List[str] = []
     disclaimer: Optional[str] = None
+    evaluation: Optional[dict] = None
 
 
 class HistoryItem(BaseModel):
@@ -75,6 +77,7 @@ class HistoryItem(BaseModel):
     related_tasks: Optional[List[dict]] = None
     provider: str
     risk_level: str = "medium"
+    evaluation: Optional[dict] = None
     response_time: Optional[int]
     status: str
     created_at: datetime

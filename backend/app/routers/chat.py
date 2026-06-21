@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db, settings
 from app.dependencies import get_public_tenant, normalize_pagination
-from app.models import ChatLog, FAQ, Tenant
+from app.models import ChatLog, Tenant
 from app.response import ok
 from app.schemas.chat import ChatRequest, ChatResponse, ChatStopRequest, HistoryResponse
 from app.security import hash_ip, sanitize_text
@@ -72,6 +72,7 @@ def _persist_chat_log(
         related_tasks=[item.model_dump() for item in response.related_tasks] if response.related_tasks else None,
         provider=response.provider,
         risk_level=response.risk_level,
+        evaluation=response.evaluation,
         response_time=response.response_time,
         status="success",
         client_ip_hash=hash_ip(request.client.host if request.client else None),
@@ -132,6 +133,7 @@ def _serialize_history_item(item: ChatLog) -> dict:
         "related_tasks": item.related_tasks,
         "provider": item.provider,
         "risk_level": item.risk_level,
+        "evaluation": item.evaluation,
         "response_time": item.response_time,
         "status": item.status,
         "created_at": item.created_at,
@@ -370,16 +372,13 @@ async def get_recommended_questions(
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_public_tenant),
 ):
-    faqs = (
-        db.query(FAQ)
-        .filter(FAQ.tenant_id == tenant.id)
-        .order_by(FAQ.updated_at.desc())
-        .limit(8)
-        .all()
-    )
     data = [
-        {"id": item.id, "question": item.question, "category": item.category, "risk_level": item.risk_level}
-        for item in faqs
+        {"id": "kb-1", "question": "新员工入职后多久要办理社保？", "category": "社保", "risk_level": "medium"},
+        {"id": "kb-2", "question": "试用期工资可以低于最低工资吗？", "category": "工资", "risk_level": "high"},
+        {"id": "kb-3", "question": "陕西产假和护理假分别是多少天？", "category": "假期", "risk_level": "medium"},
+        {"id": "kb-4", "question": "劳动仲裁时效是多久？", "category": "仲裁", "risk_level": "high"},
+        {"id": "kb-5", "question": "员工自愿放弃社保可以吗？", "category": "社保", "risk_level": "high"},
+        {"id": "kb-6", "question": "知识库材料包含身份证号时应该如何脱敏？", "category": "数据安全", "risk_level": "high"},
     ]
     return ok(data)
 

@@ -9,14 +9,14 @@ from typing import Optional
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, func, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db, settings
 from app.dependencies import get_admin_tenant_filter, get_current_admin, normalize_pagination, order_by_newest
-from app.models import Admin, ChatLog, FAQ, Feedback, KnowledgePackage, Source, Tenant, TestQuestion
+from app.models import Admin, ChatLog, Feedback, KnowledgePackage, Source, Tenant, TestQuestion, VectorCollectionVersion
 from app.response import ok, page as page_response
 from app.schemas.admin import (
     AdminCreate,
@@ -27,8 +27,9 @@ from app.schemas.admin import (
     SystemConfigUpdate,
     TenantCreate,
     TenantUpdate,
+    VectorVersionActivateRequest,
+    VectorVersionArchiveRequest,
 )
-from app.schemas.faq import FAQCreate, FAQUpdate
 from app.schemas.source import SourceCreate, SourceUpdate
 from app.security import (
     ROLE_LABELS,
@@ -44,18 +45,24 @@ from app.security import (
     sanitize_text,
 )
 from app.services.dify_service import check_external_services
+from app.services.milvus_vector_service import (
+    SUPPORTED_VECTOR_EXTENSIONS,
+    MilvusVectorService,
+    VectorStoreUnavailable,
+)
+from app.services.quality_reports import build_vector_ingest_quality_report
 from app.services.runtime_config import (
     CONFIG_KEYS,
     get_runtime_config,
     normalize_config_update,
     set_db_config_value,
 )
+from app.services.vector_version_service import activate_version, archive_version
 
 router = APIRouter(prefix="/api/admin", tags=["管理端"])
 
 ALLOWED_SOURCE_FILE_EXTENSIONS = {".pdf", ".doc", ".docx", ".txt", ".md", ".html", ".htm", ".csv", ".xlsx", ".xls"}
 ALLOWED_IMPORT_FILE_EXTENSIONS = {".csv"}
-FAQ_EXPORT_FIELDS = ["id", "faq_code", "question", "answer", "category", "region", "risk_level", "keywords", "language", "effective_date"]
 SOURCE_EXPORT_FIELDS = ["id", "source_code", "title", "url", "doc_type", "issuer", "region", "validity_status", "review_status", "reviewed_at", "reviewed_by", "local_file", "description"]
 PACKAGE_EXPORT_FIELDS = ["id", "name", "region", "version", "description", "categories", "status", "dify_dataset_id", "ragflow_dataset_id"]
 
@@ -63,6 +70,39 @@ PACKAGE_EXPORT_FIELDS = ["id", "name", "region", "version", "description", "cate
 def _require_permission(current_admin: dict, permission: str) -> None:
     if permission not in current_admin.get("permissions", []):
         raise HTTPException(status_code=403, detail="当前账号没有该操作权限")
+
+
+def _serialize_vector_version(item: VectorCollectionVersion) -> dict:
+    tenant = item.tenant
+    return {
+        "id": item.id,
+        "tenant_id": item.tenant_id,
+        "tenant_code": tenant.code if tenant else None,
+        "tenant_name": tenant.name if tenant else None,
+        "version": item.version,
+        "collection_name": item.collection_name,
+        "display_name": item.display_name,
+        "description": item.description,
+        "manifest_path": item.manifest_path,
+        "manifest_sha256": item.manifest_sha256,
+        "categories": item.categories or [],
+        "embedding_model": item.embedding_model,
+        "chunk_size": item.chunk_size,
+        "chunk_overlap": item.chunk_overlap,
+        "document_count": item.document_count,
+        "indexed_count": item.indexed_count,
+        "failed_count": item.failed_count,
+        "chunk_count": item.chunk_count,
+        "status": item.status,
+        "is_active": item.is_active,
+        "build_started_at": item.build_started_at,
+        "build_finished_at": item.build_finished_at,
+        "activated_at": item.activated_at,
+        "activated_by": item.activated_by,
+        "created_by": item.created_by,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
 
 
 def _parse_ids(ids: Optional[str]) -> list[int]:
@@ -186,20 +226,6 @@ def _tenant_scoped_query(db: Session, model, current_admin: dict, tenant_id: Opt
     return query
 
 
-def _find_duplicate_faq(db: Session, tenant_id: int, payload: dict, exclude_id: Optional[int] = None) -> Optional[FAQ]:
-    filters = []
-    if payload.get("faq_code"):
-        filters.append(FAQ.faq_code == payload["faq_code"])
-    if payload.get("question"):
-        filters.append((FAQ.language == payload.get("language", "zh-CN")) & (FAQ.question == payload["question"]))
-    if not filters:
-        return None
-    query = db.query(FAQ).filter(FAQ.tenant_id == tenant_id, or_(*filters))
-    if exclude_id:
-        query = query.filter(FAQ.id != exclude_id)
-    return query.order_by(FAQ.id.asc()).first()
-
-
 def _find_duplicate_source(db: Session, tenant_id: int, payload: dict, exclude_id: Optional[int] = None) -> Optional[Source]:
     filters = []
     if payload.get("source_code"):
@@ -295,23 +321,6 @@ def _sources_from_current_catalog(db: Session, tenant_id: int, log: ChatLog) -> 
                 "review_status": item.get("review_status"),
             })
 
-    faq = (
-        db.query(FAQ)
-        .filter(FAQ.tenant_id == tenant_id, FAQ.question == log.question)
-        .order_by(FAQ.id.asc())
-        .first()
-    )
-    if faq and faq.source_ids:
-        faq_sources = (
-            db.query(Source)
-            .filter(Source.tenant_id == tenant_id, Source.id.in_(faq.source_ids))
-            .order_by(Source.id.asc())
-            .all()
-        )
-        for source in faq_sources:
-            if source.id not in used_ids:
-                corrected.append(source_to_dict(source))
-
     return corrected
 
 
@@ -382,7 +391,6 @@ async def get_statistics(
 
     chat_query = scoped(ChatLog)
     feedback_query = scoped(Feedback)
-    faq_query = scoped(FAQ)
     source_query = scoped(Source)
 
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -404,7 +412,7 @@ async def get_statistics(
         "today_questions": chat_query.filter(ChatLog.created_at >= today).count(),
         "total_feedbacks": total_feedbacks,
         "pending_feedbacks": feedback_query.filter(Feedback.status == "pending").count(),
-        "total_faqs": faq_query.count(),
+        "total_faqs": 0,
         "total_sources": source_query.count(),
         "total_tenants": db.query(Tenant).count() if current_admin["role"] == "super_admin" else 1,
         "helpful_rate": helpful_rate,
@@ -420,12 +428,33 @@ async def get_system_config(
     db: Session = Depends(get_db),
     current_admin: dict = Depends(get_current_admin),
 ):
+    # 系统配置只允许 super_admin 查看，避免普通租户管理员看到全局 API Key 状态。
     require_role(current_admin["role"], SUPER_ADMIN_ROLES)
     runtime_config = get_runtime_config(db)
     return ok(SystemConfigResponse(
+        query_strategy=runtime_config.query_strategy,
         dify_base_url=runtime_config.dify_base_url,
         dify_api_key_configured=bool(runtime_config.dify_api_key),
         dify_timeout_seconds=runtime_config.dify_timeout_seconds,
+        langchain_base_url=runtime_config.langchain_base_url,
+        langchain_api_key_configured=bool(runtime_config.langchain_api_key),
+        langchain_model=runtime_config.langchain_model,
+        langchain_embedding_model=runtime_config.langchain_embedding_model,
+        langchain_temperature=runtime_config.langchain_temperature,
+        langchain_timeout_seconds=runtime_config.langchain_timeout_seconds,
+        milvus_uri=runtime_config.milvus_uri,
+        milvus_token_configured=bool(runtime_config.milvus_token),
+        milvus_collection=runtime_config.milvus_collection,
+        active_vector_version_id=runtime_config.active_vector_version_id,
+        vector_search_mode=runtime_config.vector_search_mode,
+        vector_top_k=runtime_config.vector_top_k,
+        vector_chunk_size=runtime_config.vector_chunk_size,
+        vector_chunk_overlap=runtime_config.vector_chunk_overlap,
+        local_embedding_enabled=runtime_config.local_embedding_enabled,
+        local_embedding_model_path=runtime_config.local_embedding_model_path,
+        local_reranker_enabled=runtime_config.local_reranker_enabled,
+        local_reranker_model_path=runtime_config.local_reranker_model_path,
+        local_fallback_bert_model_path=runtime_config.local_fallback_bert_model_path,
         ragflow_base_url=runtime_config.ragflow_base_url,
         ragflow_web_url=runtime_config.ragflow_web_url,
         ragflow_api_key_configured=bool(runtime_config.ragflow_api_key),
@@ -439,6 +468,8 @@ async def update_system_config(
     db: Session = Depends(get_db),
     current_admin: dict = Depends(get_current_admin),
 ):
+    # 这里保存的是 LangChain、Milvus、Dify、RAGFlow 等运行时配置。
+    # normalize_config_update 会做白名单和格式校验，防止非法配置写入数据库。
     require_role(current_admin["role"], SUPER_ADMIN_ROLES)
     updates = request.model_dump(exclude_unset=True)
 
@@ -455,6 +486,81 @@ async def update_system_config(
         set_db_config_value(db, key, value)
     db.commit()
     return ok({"message": "配置更新成功"}, "配置更新成功")
+
+
+@router.get("/vector-versions")
+async def get_vector_versions(
+    tenant_id: Optional[int] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    db: Session = Depends(get_db),
+    current_admin: dict = Depends(get_current_admin),
+):
+    # 向量版本记录存在 MySQL；真正的向量数据存在对应的 Milvus collection。
+    _require_permission(current_admin, "vector_versions")
+    page, page_size = normalize_pagination(page, page_size)
+    allowed_tenant_id = get_admin_tenant_filter(current_admin, tenant_id)
+    query = db.query(VectorCollectionVersion)
+    if allowed_tenant_id:
+        query = query.filter(VectorCollectionVersion.tenant_id == allowed_tenant_id)
+    if status:
+        query = query.filter(VectorCollectionVersion.status == status)
+    total = query.count()
+    rows = (
+        query.order_by(VectorCollectionVersion.is_active.desc(), VectorCollectionVersion.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return page_response([_serialize_vector_version(item) for item in rows], total, page, page_size)
+
+
+@router.put("/vector-versions/{version_id}/activate")
+async def activate_vector_version(
+    version_id: int,
+    request: VectorVersionActivateRequest,
+    db: Session = Depends(get_db),
+    current_admin: dict = Depends(get_current_admin),
+):
+    # 激活版本本质上是把系统配置里的 milvus_collection 切到该版本 collection。
+    require_role(current_admin["role"], TENANT_ADMIN_ROLES)
+    version_record = db.query(VectorCollectionVersion).filter(VectorCollectionVersion.id == version_id).first()
+    if not version_record:
+        raise HTTPException(status_code=404, detail="向量库版本不存在")
+    allowed_tenant_id = get_admin_tenant_filter(current_admin, request.tenant_id or version_record.tenant_id)
+    if allowed_tenant_id != version_record.tenant_id:
+        raise HTTPException(status_code=403, detail="当前账号没有该版本操作权限")
+    if version_record.status not in {"ready", "active"}:
+        raise HTTPException(status_code=400, detail="仅 ready/active 状态的版本可激活")
+    activate_version(db, version_record, activated_by=current_admin.get("username") or "admin")
+    db.commit()
+    db.refresh(version_record)
+    return ok(_serialize_vector_version(version_record), "向量库版本已激活")
+
+
+@router.put("/vector-versions/{version_id}/archive")
+async def archive_vector_version(
+    version_id: int,
+    request: VectorVersionArchiveRequest,
+    db: Session = Depends(get_db),
+    current_admin: dict = Depends(get_current_admin),
+):
+    # 归档只改 MySQL 版本状态，不删除 Milvus collection，避免误删可回滚数据。
+    require_role(current_admin["role"], TENANT_ADMIN_ROLES)
+    version_record = db.query(VectorCollectionVersion).filter(VectorCollectionVersion.id == version_id).first()
+    if not version_record:
+        raise HTTPException(status_code=404, detail="向量库版本不存在")
+    allowed_tenant_id = get_admin_tenant_filter(current_admin, request.tenant_id or version_record.tenant_id)
+    if allowed_tenant_id != version_record.tenant_id:
+        raise HTTPException(status_code=403, detail="当前账号没有该版本操作权限")
+    try:
+        archive_version(db, version_record)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(version_record)
+    return ok(_serialize_vector_version(version_record), "向量库版本已归档")
 
 
 @router.get("/tenants")
@@ -729,214 +835,6 @@ async def get_log_detail(
     )
 
 
-@router.get("/faqs")
-async def get_faqs(
-    tenant_id: Optional[int] = None,
-    category: Optional[str] = None,
-    keyword: Optional[str] = None,
-    page: int = 1,
-    page_size: int = 20,
-    db: Session = Depends(get_db),
-    current_admin: dict = Depends(get_current_admin),
-):
-    _require_permission(current_admin, "faqs")
-    page, page_size = normalize_pagination(page, page_size)
-    query = _tenant_scoped_query(db, FAQ, current_admin, tenant_id)
-    if category:
-        query = query.filter(FAQ.category == category)
-    if keyword:
-        query = query.filter(or_(FAQ.question.contains(keyword), FAQ.faq_code.contains(keyword)))
-    total = query.count()
-    items = order_by_newest(query, FAQ).offset((page - 1) * page_size).limit(page_size).all()
-    return page_response(items, total, page, page_size)
-
-
-@router.get("/faqs/export")
-async def export_faqs(
-    tenant_id: Optional[int] = None,
-    category: Optional[str] = None,
-    keyword: Optional[str] = None,
-    ids: Optional[str] = None,
-    db: Session = Depends(get_db),
-    current_admin: dict = Depends(get_current_admin),
-):
-    _require_permission(current_admin, "faqs_export")
-    query = _module_query(db, FAQ, current_admin, ids, tenant_id)
-    if category:
-        query = query.filter(FAQ.category == category)
-    if keyword:
-        query = query.filter(or_(FAQ.question.contains(keyword), FAQ.faq_code.contains(keyword)))
-    rows = [
-        {
-            "id": item.id,
-            "faq_code": item.faq_code,
-            "question": item.question,
-            "answer": item.answer,
-            "category": item.category,
-            "region": item.region,
-            "risk_level": item.risk_level,
-            "keywords": item.keywords or [],
-            "language": item.language,
-            "effective_date": item.effective_date,
-        }
-        for item in order_by_newest(query, FAQ).all()
-    ]
-    return _csv_text_response("faqs.csv", rows, FAQ_EXPORT_FIELDS)
-
-
-@router.post("/faqs/import")
-async def import_faqs(
-    tenant_id: Optional[int] = None,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_admin: dict = Depends(get_current_admin),
-):
-    _require_permission(current_admin, "faqs_import")
-    allowed_tenant_id = get_admin_tenant_filter(current_admin, tenant_id)
-    rows = await _read_import_rows(file)
-    imported = 0
-    updated = 0
-    skipped = 0
-    errors: list[str] = []
-    for index, row in enumerate(rows, start=2):
-        question = sanitize_text(row.get("question") or row.get("问题"))
-        answer = sanitize_text(row.get("answer") or row.get("回答") or row.get("答案"))
-        if not question or not answer:
-            skipped += 1
-            errors.append(f"第 {index} 行缺少 question/answer")
-            continue
-        payload = {
-            "faq_code": row.get("faq_code") or row.get("编码") or None,
-            "question": question,
-            "answer": answer,
-            "category": row.get("category") or row.get("分类") or None,
-            "region": row.get("region") or row.get("地区") or "陕西",
-            "risk_level": row.get("risk_level") or row.get("风险等级") or "medium",
-            "keywords": _read_json_list(row.get("keywords") or row.get("关键词")),
-            "aliases": _read_json_list(row.get("aliases")),
-            "source_ids": _read_json_list(row.get("source_ids")),
-            "language": row.get("language") or "zh-CN",
-            "effective_date": row.get("effective_date") or None,
-        }
-        faq = _find_duplicate_faq(db, allowed_tenant_id, payload)
-        if faq:
-            for field, value in payload.items():
-                setattr(faq, field, value)
-            updated += 1
-        else:
-            db.add(FAQ(tenant_id=allowed_tenant_id, **payload))
-            imported += 1
-    db.commit()
-    return ok({"imported": imported, "updated": updated, "skipped": skipped, "errors": errors[:20]}, "FAQ 导入完成")
-
-
-@router.post("/faqs/batch")
-async def batch_faqs(
-    request: dict,
-    db: Session = Depends(get_db),
-    current_admin: dict = Depends(get_current_admin),
-):
-    _require_permission(current_admin, "faqs_batch")
-    ids = request.get("ids") or []
-    action = request.get("action")
-    if not ids:
-        raise HTTPException(status_code=400, detail="请选择要批量操作的数据")
-    query = _tenant_scoped_query(db, FAQ, current_admin).filter(FAQ.id.in_(ids))
-    items = query.all()
-    if action == "delete":
-        for item in items:
-            db.delete(item)
-    elif action == "set_risk":
-        risk_level = request.get("risk_level")
-        if risk_level not in {"low", "medium", "high"}:
-            raise HTTPException(status_code=400, detail="无效的风险等级")
-        for item in items:
-            item.risk_level = risk_level
-    else:
-        raise HTTPException(status_code=400, detail="不支持的批量操作")
-    db.commit()
-    return ok({"affected": len(items)}, "批量操作完成")
-
-
-@router.post("/faqs")
-async def create_faq(
-    request: FAQCreate,
-    tenant_id: Optional[int] = None,
-    db: Session = Depends(get_db),
-    current_admin: dict = Depends(get_current_admin),
-):
-    _require_permission(current_admin, "faqs")
-    allowed_tenant_id = get_admin_tenant_filter(current_admin, tenant_id)
-    payload = {
-        "faq_code": request.faq_code,
-        "question": sanitize_text(request.question),
-        "answer": sanitize_text(request.answer),
-        "category": request.category,
-        "region": request.region,
-        "risk_level": request.risk_level,
-        "keywords": request.keywords,
-        "aliases": request.aliases,
-        "source_ids": request.source_ids,
-        "language": request.language,
-        "effective_date": request.effective_date,
-    }
-    faq = _find_duplicate_faq(db, allowed_tenant_id, payload)
-    if faq:
-        for field, value in payload.items():
-            setattr(faq, field, value)
-        message = "FAQ 已存在，已覆盖更新"
-    else:
-        faq = FAQ(tenant_id=allowed_tenant_id, **payload)
-        db.add(faq)
-        message = "FAQ 添加成功"
-    db.commit()
-    db.refresh(faq)
-    return ok(faq, message)
-
-
-@router.put("/faqs/{faq_id}")
-async def update_faq(
-    faq_id: int,
-    request: FAQUpdate,
-    db: Session = Depends(get_db),
-    current_admin: dict = Depends(get_current_admin),
-):
-    _require_permission(current_admin, "faqs")
-    faq = db.query(FAQ).filter(FAQ.id == faq_id).first()
-    if not faq:
-        raise HTTPException(status_code=404, detail="FAQ 不存在")
-    get_admin_tenant_filter(current_admin, faq.tenant_id)
-    update_data = request.model_dump(exclude_unset=True)
-    candidate = {
-        "faq_code": update_data.get("faq_code", faq.faq_code),
-        "question": sanitize_text(update_data.get("question", faq.question)),
-        "language": update_data.get("language", faq.language),
-    }
-    if _find_duplicate_faq(db, faq.tenant_id, candidate, exclude_id=faq.id):
-        raise HTTPException(status_code=400, detail="该租户下已存在相同 FAQ 编码或问题")
-    for field, value in update_data.items():
-        setattr(faq, field, sanitize_text(value) if field in {"question", "answer"} else value)
-    db.commit()
-    db.refresh(faq)
-    return ok(faq, "FAQ 更新成功")
-
-
-@router.delete("/faqs/{faq_id}")
-async def delete_faq(
-    faq_id: int,
-    db: Session = Depends(get_db),
-    current_admin: dict = Depends(get_current_admin),
-):
-    _require_permission(current_admin, "faqs")
-    faq = db.query(FAQ).filter(FAQ.id == faq_id).first()
-    if not faq:
-        raise HTTPException(status_code=404, detail="FAQ 不存在")
-    get_admin_tenant_filter(current_admin, faq.tenant_id)
-    db.delete(faq)
-    db.commit()
-    return ok(message="FAQ 删除成功")
-
-
 @router.get("/sources")
 async def get_sources(
     tenant_id: Optional[int] = None,
@@ -1162,6 +1060,100 @@ async def upload_source_file(
     )
 
 
+@router.post("/vector-documents/upload")
+async def upload_vector_document(
+    tenant_id: Optional[int] = None,
+    title: Optional[str] = Form(None),
+    source_id: Optional[int] = Form(None),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_admin: dict = Depends(get_current_admin),
+):
+    # 管理端“文档解析入库”入口：上传文件 -> 临时落盘 -> 解析/切分/Embedding -> Milvus。
+    _require_permission(current_admin, "sources")
+    allowed_tenant_id = get_admin_tenant_filter(current_admin, tenant_id)
+    if not allowed_tenant_id:
+        raise HTTPException(status_code=400, detail="文档入库必须绑定租户")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="请上传文件")
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in SUPPORTED_VECTOR_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="暂不支持该文件类型的解析入库")
+
+    tenant = db.query(Tenant).filter(Tenant.id == allowed_tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="租户不存在")
+
+    source = None
+    if source_id:
+        source = db.query(Source).filter(Source.id == source_id, Source.tenant_id == allowed_tenant_id).first()
+        if not source:
+            raise HTTPException(status_code=404, detail="来源不存在")
+
+    safe_name = _safe_upload_filename(file.filename)
+    upload_root = Path(settings.upload_dir).resolve()
+    target_dir = upload_root / f"tenant_{allowed_tenant_id}" / "vector-documents"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / safe_name
+
+    size = 0
+    try:
+        with target_path.open("wb") as output:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > settings.max_upload_bytes:
+                    target_path.unlink(missing_ok=True)
+                    raise HTTPException(status_code=413, detail="上传文件过大")
+                output.write(chunk)
+    finally:
+        await file.close()
+
+    relative_path = target_path.relative_to(upload_root).as_posix()
+    runtime_config = get_runtime_config(db)
+    service = MilvusVectorService(runtime_config)
+    try:
+        # index_file 会根据文件内容和 Markdown frontmatter 判断普通文档/FAQ，
+        # 并把 chunk 写入当前激活的 Milvus collection。
+        result = service.index_file(
+            path=target_path,
+            filename=file.filename,
+            local_file=relative_path,
+            tenant_id=allowed_tenant_id,
+            tenant_code=tenant.code,
+            tenant_name=tenant.name,
+            title=title or (source.title if source else None),
+            source_id=source_id,
+        )
+    except VectorStoreUnavailable as exc:
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=502, detail="Milvus 入库失败，请检查 Milvus、Embedding 配置和服务状态") from exc
+    # 入库成功后立即生成质量报告，帮助管理员判断是否需要补标题、关联来源或重新切分。
+    quality_report = build_vector_ingest_quality_report(
+        result=result,
+        title=title or (source.title if source else None),
+        source_id=source_id,
+        tenant_code=tenant.code,
+    )
+
+    return ok(
+        {
+            "document_id": result.document_id,
+            "title": result.title,
+            "filename": result.filename,
+            "local_file": result.local_file,
+            "characters": result.characters,
+            "chunks": result.chunks,
+            "collection": result.collection,
+            "size": size,
+            "quality_report": quality_report.model_dump(),
+        },
+        "文档解析入库成功",
+    )
+
+
 @router.put("/sources/{source_id}")
 async def update_source(
     source_id: int,
@@ -1254,7 +1246,6 @@ async def get_knowledge_packages(
                 "description": pkg.description,
                 "categories": pkg.categories or [],
                 "status": pkg.status,
-                "faq_count": db.query(FAQ).filter(FAQ.tenant_id == pkg.tenant_id).count(),
                 "doc_count": db.query(Source).filter(Source.tenant_id == pkg.tenant_id).count(),
                 "created_at": pkg.created_at,
                 "updated_at": pkg.updated_at,

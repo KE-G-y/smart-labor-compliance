@@ -41,6 +41,19 @@ def test_system_config_update_preserves_secret_semantics_and_skips_network_valid
                 "dify_base_url": "http://127.0.0.1:65500/v1",
                 "dify_api_key": "global-dify-secret",
                 "dify_timeout_seconds": 7,
+                "langchain_base_url": "http://127.0.0.1:65503/v1",
+                "langchain_api_key": "global-langchain-secret",
+                "langchain_model": "gpt-4o-mini",
+                "langchain_embedding_model": "bge-m3",
+                "langchain_temperature": 0.1,
+                "langchain_timeout_seconds": 9,
+                "milvus_uri": "http://127.0.0.1:19530",
+                "milvus_token": "milvus-secret",
+                "milvus_collection": "slc_test_docs",
+                "vector_search_mode": "hybrid",
+                "vector_top_k": 5,
+                "vector_chunk_size": 500,
+                "vector_chunk_overlap": 50,
                 "ragflow_web_url": "http://127.0.0.1:65501",
                 "ragflow_api_key": "global-ragflow-secret",
             },
@@ -53,30 +66,47 @@ def test_system_config_update_preserves_secret_semantics_and_skips_network_valid
     assert config["data"]["dify_base_url"] == "http://127.0.0.1:65500/v1"
     assert config["data"]["dify_api_key_configured"] is True
     assert config["data"]["dify_timeout_seconds"] == 7
+    assert config["data"]["langchain_base_url"] == "http://127.0.0.1:65503/v1"
+    assert config["data"]["langchain_api_key_configured"] is True
+    assert config["data"]["langchain_model"] == "gpt-4o-mini"
+    assert config["data"]["langchain_embedding_model"] == "bge-m3"
+    assert config["data"]["langchain_temperature"] == 0.1
+    assert config["data"]["langchain_timeout_seconds"] == 9
+    assert config["data"]["milvus_uri"] == "http://127.0.0.1:19530"
+    assert config["data"]["milvus_token_configured"] is True
+    assert config["data"]["milvus_collection"] == "slc_test_docs"
+    assert config["data"]["vector_search_mode"] == "hybrid"
+    assert config["data"]["vector_top_k"] == 5
+    assert config["data"]["vector_chunk_size"] == 500
+    assert config["data"]["vector_chunk_overlap"] == 50
     assert config["data"]["ragflow_api_key_configured"] is True
 
     assert_ok(
         client.put(
             f"{api_base_url}/api/admin/system-config",
             headers=super_headers,
-            json={"dify_base_url": "http://127.0.0.1:65502/v1"},
+            json={"dify_base_url": "http://127.0.0.1:65502/v1", "langchain_temperature": 1.2},
             timeout=10,
         )
     )
     config = assert_ok(client.get(f"{api_base_url}/api/admin/system-config", headers=super_headers, timeout=10))
     assert config["data"]["dify_base_url"] == "http://127.0.0.1:65502/v1"
     assert config["data"]["dify_api_key_configured"] is True
+    assert config["data"]["langchain_api_key_configured"] is True
+    assert config["data"]["langchain_temperature"] == 1.2
 
     assert_ok(
         client.put(
             f"{api_base_url}/api/admin/system-config",
             headers=super_headers,
-            json={"dify_api_key": None},
+            json={"dify_api_key": None, "langchain_api_key": None, "milvus_token": None},
             timeout=10,
         )
     )
     config = assert_ok(client.get(f"{api_base_url}/api/admin/system-config", headers=super_headers, timeout=10))
     assert config["data"]["dify_api_key_configured"] is False
+    assert config["data"]["langchain_api_key_configured"] is False
+    assert config["data"]["milvus_token_configured"] is False
 
     invalid_url = client.put(
         f"{api_base_url}/api/admin/system-config",
@@ -93,6 +123,22 @@ def test_system_config_update_preserves_secret_semantics_and_skips_network_valid
         timeout=10,
     )
     assert invalid_timeout.status_code == 400
+
+    invalid_temperature = client.put(
+        f"{api_base_url}/api/admin/system-config",
+        headers=super_headers,
+        json={"langchain_temperature": 2.5},
+        timeout=10,
+    )
+    assert invalid_temperature.status_code == 400
+
+    invalid_chunk_size = client.put(
+        f"{api_base_url}/api/admin/system-config",
+        headers=super_headers,
+        json={"vector_chunk_size": 100},
+        timeout=10,
+    )
+    assert invalid_chunk_size.status_code == 400
 
 
 def test_stop_generation_without_registered_task_is_safe(client, api_base_url):

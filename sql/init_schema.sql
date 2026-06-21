@@ -72,29 +72,6 @@ CREATE TABLE IF NOT EXISTS slc_sources (
   CONSTRAINT fk_slc_sources_tenant FOREIGN KEY (tenant_id) REFERENCES slc_tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS slc_faqs (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  tenant_id INT NOT NULL,
-  faq_code VARCHAR(40),
-  question VARCHAR(500) NOT NULL,
-  answer TEXT NOT NULL,
-  category VARCHAR(50),
-  region VARCHAR(80) NOT NULL DEFAULT '陕西',
-  risk_level VARCHAR(20) NOT NULL DEFAULT 'medium',
-  keywords JSON,
-  aliases JSON,
-  source_ids JSON,
-  language VARCHAR(12) NOT NULL DEFAULT 'zh-CN',
-  effective_date DATE,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_slc_faqs_tenant_faq_code (tenant_id, faq_code),
-  UNIQUE KEY uq_slc_faqs_tenant_language_question (tenant_id, language, question),
-  INDEX ix_slc_faqs_tenant_id (tenant_id),
-  INDEX ix_slc_faqs_faq_code (faq_code),
-  CONSTRAINT fk_slc_faqs_tenant FOREIGN KEY (tenant_id) REFERENCES slc_tenants(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 CREATE TABLE IF NOT EXISTS slc_chat_logs (
   id INT AUTO_INCREMENT PRIMARY KEY,
   tenant_id INT NOT NULL,
@@ -106,7 +83,7 @@ CREATE TABLE IF NOT EXISTS slc_chat_logs (
   answer TEXT,
   sources JSON,
   related_tasks JSON,
-  provider VARCHAR(30) NOT NULL DEFAULT 'local_faq',
+  provider VARCHAR(30) NOT NULL DEFAULT 'kb_no_match',
   risk_level VARCHAR(20) NOT NULL DEFAULT 'medium',
   response_time INT,
   status VARCHAR(20) DEFAULT 'success',

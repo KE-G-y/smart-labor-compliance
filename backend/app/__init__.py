@@ -1,6 +1,11 @@
-"""
-应用包
-"""
-from app.main import app
+"""应用包。"""
 
 __all__ = ["app"]
+
+
+def __getattr__(name: str):
+    if name == "app":
+        from app.main import app
+
+        return app
+    raise AttributeError(name)

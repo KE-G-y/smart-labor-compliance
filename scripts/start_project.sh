@@ -12,6 +12,7 @@ FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 BACKEND_HOST="${BACKEND_HOST:-0.0.0.0}"
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 INSTALL_DEPS="${INSTALL_DEPS:-auto}"
+START_LOCAL_SERVICES="${START_LOCAL_SERVICES:-auto}"
 BACKEND_RELOAD="${BACKEND_RELOAD:-0}"
 BACKEND_PID_FILE="$RUN_DIR/backend.pid"
 FRONTEND_PID_FILE="$RUN_DIR/frontend.pid"
@@ -57,6 +58,13 @@ read_pid_file() {
 
 install_enabled() {
   case "$INSTALL_DEPS" in
+    0|false|FALSE|no|NO) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+local_services_enabled() {
+  case "$START_LOCAL_SERVICES" in
     0|false|FALSE|no|NO) return 1 ;;
     *) return 0 ;;
   esac
@@ -121,6 +129,180 @@ ensure_port_free() {
   fail "$name 端口 $port 已被占用，PID：$(printf '%s\n' "$pids" | tr '\n' ' ')"
 }
 
+ensure_backend_env() {
+  if [[ -f "$BACKEND_DIR/.env" ]]; then
+    return 0
+  fi
+
+  if [[ -f "$BACKEND_DIR/.env.example" ]]; then
+    cp "$BACKEND_DIR/.env.example" "$BACKEND_DIR/.env"
+    log "已生成本地后端配置：backend/.env"
+    return 0
+  fi
+
+  fail "缺少 backend/.env，且未找到 backend/.env.example"
+}
+
+ensure_root_env() {
+  if [[ -f "$ROOT_DIR/.env" || ! -f "$ROOT_DIR/.env.example" ]]; then
+    return 0
+  fi
+
+  cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
+  log "已生成 Docker Compose 配置：.env"
+}
+
+compose_env_value() {
+  local key="$1"
+  local default_value="$2"
+  local value=""
+
+  if [[ -f "$ROOT_DIR/.env" ]]; then
+    value="$(awk -F= -v key="$key" '$1 == key {print substr($0, length(key) + 2); exit}' "$ROOT_DIR/.env")"
+  fi
+
+  if [[ -n "$value" ]]; then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "$default_value"
+  fi
+}
+
+port_owned_by_compose() {
+  local port="$1"
+  local pids
+  local pid
+  local command_line
+
+  pids="$(port_pids "$port" || true)"
+  [[ -n "$pids" ]] || return 1
+
+  for pid in $pids; do
+    command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    if [[ "$command_line" != *"com.docker"* && "$command_line" != *"docker"* ]]; then
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+ensure_compose_port_free() {
+  local name="$1"
+  local port="$2"
+  local pids
+
+  pids="$(port_pids "$port" || true)"
+  [[ -z "$pids" ]] && return 0
+  port_owned_by_compose "$port" && return 0
+
+  fail "$name 端口 $port 已被占用，PID：$(printf '%s\n' "$pids" | tr '\n' ' ')"
+}
+
+ensure_compose_ports_free() {
+  local mysql_port
+  local minio_api_port
+  local minio_console_port
+  local milvus_port
+  local milvus_webui_port
+
+  mysql_port="$(compose_env_value MYSQL_HOST_PORT 3306)"
+  minio_api_port="$(compose_env_value MINIO_API_HOST_PORT 9000)"
+  minio_console_port="$(compose_env_value MINIO_CONSOLE_HOST_PORT 9001)"
+  milvus_port="$(compose_env_value MILVUS_HOST_PORT 19530)"
+  milvus_webui_port="$(compose_env_value MILVUS_WEBUI_HOST_PORT 9091)"
+
+  ensure_compose_port_free "Docker MySQL" "$mysql_port"
+  ensure_compose_port_free "Docker MinIO API" "$minio_api_port"
+  ensure_compose_port_free "Docker MinIO Console" "$minio_console_port"
+  ensure_compose_port_free "Docker Milvus" "$milvus_port"
+  ensure_compose_port_free "Docker Milvus WebUI" "$milvus_webui_port"
+}
+
+compose_service_network_attached() {
+  local service="$1"
+  local container_id
+  local networks
+
+  container_id="$(docker compose ps -q "$service" 2>/dev/null || true)"
+  [[ -n "$container_id" ]] || return 1
+
+  networks="$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{end}}' "$container_id" 2>/dev/null || true)"
+  [[ -n "$networks" ]]
+}
+
+compose_services_network_attached() {
+  compose_service_network_attached mysql \
+    && compose_service_network_attached minio \
+    && compose_service_network_attached etcd \
+    && compose_service_network_attached milvus
+}
+
+wait_for_compose_service() {
+  local service="$1"
+  local name="$2"
+  local seconds="${3:-180}"
+  local container_id
+  local status
+  local i
+
+  for ((i = 1; i <= seconds; i += 1)); do
+    container_id="$(docker compose ps -q "$service" 2>/dev/null || true)"
+    if [[ -n "$container_id" ]]; then
+      status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+      if [[ "$status" == "healthy" || "$status" == "running" ]]; then
+        log "${name} 已就绪"
+        return 0
+      fi
+    fi
+
+    sleep 1
+  done
+
+  docker compose ps "$service" >&2 || true
+  fail "${name} 在 ${seconds}s 内未就绪"
+}
+
+ensure_local_services() {
+  local mysql_running
+  local minio_running
+  local milvus_running
+
+  local_services_enabled || return 0
+  command_exists docker || {
+    log "未检测到 docker，跳过 MySQL/MinIO/Milvus 自动启动；请确认本机服务已就绪"
+    return 0
+  }
+
+  ensure_root_env
+
+  mysql_running=0
+  minio_running=0
+  milvus_running=0
+  if command_exists docker; then
+    [[ -n "$(docker compose ps --status running -q mysql 2>/dev/null)" ]] && mysql_running=1 || true
+    [[ -n "$(docker compose ps --status running -q minio 2>/dev/null)" ]] && minio_running=1 || true
+    [[ -n "$(docker compose ps --status running -q milvus 2>/dev/null)" ]] && milvus_running=1 || true
+  fi
+
+  if [[ "$mysql_running" == "1" && "$minio_running" == "1" && "$milvus_running" == "1" ]]; then
+    if compose_services_network_attached; then
+      log "本地 MySQL/MinIO/Milvus 依赖服务已运行"
+      return 0
+    fi
+
+    log "检测到 Docker 依赖容器网络状态异常，将重新创建依赖容器"
+  else
+    ensure_compose_ports_free
+  fi
+
+  log "启动本地依赖服务：mysql、etcd、minio、milvus..."
+  docker compose up -d --force-recreate mysql etcd minio milvus
+  wait_for_compose_service "mysql" "MySQL" 120
+  wait_for_compose_service "minio" "MinIO" 120
+  wait_for_compose_service "milvus" "Milvus" 240
+}
+
 wait_for_http() {
   local name="$1"
   local url="$2"
@@ -153,13 +335,26 @@ wait_for_http() {
 
 ensure_backend_deps() {
   if "$PYTHON_BIN" -c "import fastapi, uvicorn, pymysql, sqlalchemy" >/dev/null 2>&1; then
-    return 0
+    :
+  else
+    install_enabled || fail "后端依赖不完整。请执行：cd backend && $PYTHON_BIN -m pip install -r requirements.txt"
+
+    log "安装/补齐后端依赖..."
+    (cd "$BACKEND_DIR" && "$PYTHON_BIN" -m pip install -r requirements.txt)
   fi
 
-  install_enabled || fail "后端依赖不完整。请执行：cd backend && $PYTHON_BIN -m pip install -r requirements.txt"
+  if grep -q '^LOCAL_.*_ENABLED=true' "$BACKEND_DIR/.env" 2>/dev/null; then
+    if "$PYTHON_BIN" -c "import torch, transformers, sentence_transformers" >/dev/null 2>&1; then
+      return 0
+    fi
 
-  log "安装/补齐后端依赖..."
-  (cd "$BACKEND_DIR" && "$PYTHON_BIN" -m pip install -r requirements.txt)
+    if [[ -f "$BACKEND_DIR/requirements-local-models.txt" ]]; then
+      log "检测到本地模型已启用，安装/补齐本地模型依赖..."
+      (cd "$BACKEND_DIR" && "$PYTHON_BIN" -m pip install -r requirements-local-models.txt)
+    else
+      log "本地模型已启用，但缺少 requirements-local-models.txt；将由后端在运行时自动回退"
+    fi
+  fi
 }
 
 ensure_frontend_deps() {
@@ -235,13 +430,15 @@ start_frontend() {
 }
 
 PYTHON_BIN="$(detect_python || true)"
-[[ -n "$PYTHON_BIN" ]] || fail "未找到 Python 3.10+。可通过 PYTHON_BIN=/path/to/python 指定解释器"
+[[ -n "$PYTHON_BIN" ]] || fail "未找到 Python 3.10+。可通过 PYTHON_BIN=python3 指定解释器"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
 log "项目根目录：$ROOT_DIR"
 log "Python 解释器：$PYTHON_BIN"
 
+ensure_backend_env
+ensure_local_services
 start_backend
 start_frontend
 

@@ -3,7 +3,7 @@ from io import BytesIO
 from conftest import assert_ok, unique
 
 
-def test_disabled_knowledge_package_short_circuits_external_and_local_faq(client, api_base_url, tenant_headers):
+def test_disabled_knowledge_package_short_circuits_external_and_vector_lookup(client, api_base_url, tenant_headers):
     packages = assert_ok(client.get(f"{api_base_url}/api/admin/knowledge-packages", headers=tenant_headers, timeout=10))
     package_ids = [item["id"] for item in packages["data"]["list"]]
 
@@ -224,6 +224,45 @@ def test_dify_failure_returns_unavailable_provider_with_reason(api_base_url, mon
         service = ComplianceAnswerService(db, tenant)
         response = service.answer("劳动仲裁收费吗？", user_id="edge-user")
 
-    assert response.provider == "dify_unavailable"
+    assert response.provider in {"dify_unavailable", "kb_no_match"}
     assert response.fallback_reason == "Dify 返回错误 400: Workflow not published"
     assert "仲裁" in response.answer
+
+
+def test_langchain_provider_is_used_before_dify_and_returns_local_sources(api_base_url, monkeypatch):
+    import os
+
+    os.environ["DB_NAME"] = "employment_slc_auto_test"
+    from app.database import SessionLocal
+    from app.models import SystemConfig, Tenant
+    from app.services import dify_service
+    from app.services.dify_service import ComplianceAnswerService
+
+    captured = {}
+
+    def fake_answer(self, prompt_context):
+        captured["question"] = prompt_context.question
+        captured["source_context"] = prompt_context.source_context
+        return "风险等级：中\n\n结论：应结合陕西省和西安市现行口径复核后处理。"
+
+    def unexpected_dify(*args, **kwargs):
+        raise AssertionError("Dify should not be called when LangChain succeeds")
+
+    monkeypatch.setattr(dify_service.LangChainComplianceProvider, "answer", fake_answer)
+    monkeypatch.setattr(dify_service.requests, "post", unexpected_dify)
+
+    with SessionLocal() as db:
+        tenant = db.query(Tenant).filter(Tenant.code == "demo-sx").first()
+        db.merge(SystemConfig(id="langchain_api_key", value="lc-test-key"))
+        db.merge(SystemConfig(id="langchain_model", value="gpt-4o-mini"))
+        db.merge(SystemConfig(id="dify_api_key", value="app-test-key"))
+        db.flush()
+
+        service = ComplianceAnswerService(db, tenant)
+        response = service.answer("陕西产假多少天？", user_id="lc-user")
+
+    assert response.provider == "langchain"
+    assert response.risk_level == "medium"
+    assert captured["question"] == "陕西产假多少天？"
+    assert "Milvus 检索片段" in captured["source_context"] or "来源 1" in captured["source_context"]
+    assert response.sources

@@ -3,10 +3,189 @@
     <div class="system-config-container">
       <section class="panel">
         <div class="section-title">
-          <h2>{{ t('difyConfig') }}</h2>
+          <h2>{{ t('queryStrategyConfig') }}</h2>
           <div class="toolbar">
             <button class="btn" :disabled="loading" @click="fetchConfig">{{ t('refresh') }}</button>
           </div>
+        </div>
+        <div v-if="loading" class="loading-mask">
+          <span>{{ t('loading') }}</span>
+        </div>
+        <form v-else class="config-form" @submit.prevent="saveConfig">
+          <div class="form-group">
+            <label>{{ t('queryStrategy') }}</label>
+            <select v-model="form.query_strategy" class="input">
+              <option v-for="option in queryStrategyOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </div>
+          <div class="config-hint">
+            <span class="tag">{{ t('configured') }}</span>
+            <span>{{ t(`${form.query_strategy}Hint`) }}</span>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>{{ t('langchainConfig') }}</h2>
+        </div>
+        <div v-if="loading" class="loading-mask">
+          <span>{{ t('loading') }}</span>
+        </div>
+        <form v-else class="config-form" @submit.prevent="saveConfig">
+          <div class="form-row">
+            <div class="form-group">
+              <label>{{ t('langchainBaseUrl') }}</label>
+              <input v-model="form.langchain_base_url" class="input" :placeholder="t('langchainBaseUrlPlaceholder')" />
+            </div>
+            <div class="form-group">
+              <label>{{ t('langchainModel') }}</label>
+              <input v-model="form.langchain_model" class="input" :placeholder="t('langchainModelPlaceholder')" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>{{ t('langchainEmbeddingModel') }}</label>
+              <input v-model="form.langchain_embedding_model" class="input" :placeholder="t('langchainEmbeddingModelPlaceholder')" />
+            </div>
+            <div class="form-group">
+              <label>{{ t('langchainTemperature') }}</label>
+              <input v-model.number="form.langchain_temperature" class="input" type="number" min="0" max="2" step="0.1" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>{{ t('langchainTimeout') }}</label>
+            <div class="input-group">
+              <input v-model.number="form.langchain_timeout_seconds" class="input" type="number" min="5" max="300" />
+              <span class="input-addon">{{ t('seconds') }}</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>{{ t('langchainApiKey') }}</label>
+            <div class="secret-row">
+              <input
+                v-model="form.langchain_api_key"
+                class="input"
+                type="password"
+                :disabled="form.langchain_api_key_clear"
+                :placeholder="form.langchain_api_key_configured ? t('langchainApiKeyConfiguredPlaceholder') : t('langchainApiKeyPlaceholder')"
+                @input="form.langchain_api_key_clear = false"
+              />
+              <button v-if="form.langchain_api_key_configured" class="btn" type="button" @click="toggleSecretClear('langchain')">
+                {{ form.langchain_api_key_clear ? t('undoClear') : t('clearApiKey') }}
+              </button>
+            </div>
+            <div v-if="form.langchain_api_key_configured || form.langchain_api_key_clear" class="config-hint">
+              <span :class="['tag', form.langchain_api_key_clear ? 'warning' : 'success']">
+                {{ form.langchain_api_key_clear ? t('willClear') : t('configured') }}
+              </span>
+              <span>{{ form.langchain_api_key_clear ? t('apiKeyClearHint') : t('langchainApiKeyConfiguredHint') }}</span>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>{{ t('milvusConfig') }}</h2>
+        </div>
+        <div v-if="loading" class="loading-mask">
+          <span>{{ t('loading') }}</span>
+        </div>
+        <form v-else class="config-form" @submit.prevent="saveConfig">
+          <div class="form-row">
+            <div class="form-group">
+              <label>{{ t('milvusUri') }}</label>
+              <input v-model="form.milvus_uri" class="input" :placeholder="t('milvusUriPlaceholder')" />
+            </div>
+            <div class="form-group">
+              <label>{{ t('milvusCollection') }}</label>
+              <input v-model="form.milvus_collection" class="input" :placeholder="t('milvusCollectionPlaceholder')" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>{{ t('vectorTopK') }}</label>
+              <input v-model.number="form.vector_top_k" class="input" type="number" min="1" max="12" />
+            </div>
+            <div class="form-group">
+              <label>{{ t('vectorChunkSize') }}</label>
+              <input v-model.number="form.vector_chunk_size" class="input" type="number" min="300" max="5000" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>{{ t('vectorChunkOverlap') }}</label>
+            <input v-model.number="form.vector_chunk_overlap" class="input" type="number" min="0" max="1000" />
+          </div>
+          <div class="form-group">
+            <label>{{ t('milvusToken') }}</label>
+            <div class="secret-row">
+              <input
+                v-model="form.milvus_token"
+                class="input"
+                type="password"
+                :disabled="form.milvus_token_clear"
+                :placeholder="form.milvus_token_configured ? t('milvusTokenConfiguredPlaceholder') : t('milvusTokenPlaceholder')"
+                @input="form.milvus_token_clear = false"
+              />
+              <button v-if="form.milvus_token_configured" class="btn" type="button" @click="toggleSecretClear('milvus')">
+                {{ form.milvus_token_clear ? t('undoClear') : t('clearApiKey') }}
+              </button>
+            </div>
+            <div v-if="form.milvus_token_configured || form.milvus_token_clear" class="config-hint">
+              <span :class="['tag', form.milvus_token_clear ? 'warning' : 'success']">
+                {{ form.milvus_token_clear ? t('willClear') : t('configured') }}
+              </span>
+              <span>{{ form.milvus_token_clear ? t('apiKeyClearHint') : t('milvusTokenConfiguredHint') }}</span>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>{{ t('localModelConfig') }}</h2>
+        </div>
+        <div v-if="loading" class="loading-mask">
+          <span>{{ t('loading') }}</span>
+        </div>
+        <form v-else class="config-form" @submit.prevent="saveConfig">
+          <div class="toggle-row">
+            <label>
+              <input v-model="form.local_embedding_enabled" type="checkbox" />
+              <span>{{ t('localEmbeddingEnabled') }}</span>
+            </label>
+            <label>
+              <input v-model="form.local_reranker_enabled" type="checkbox" />
+              <span>{{ t('localRerankerEnabled') }}</span>
+            </label>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>{{ t('localEmbeddingModelPath') }}</label>
+              <input v-model="form.local_embedding_model_path" class="input" :placeholder="t('localEmbeddingModelPathPlaceholder')" />
+            </div>
+            <div class="form-group">
+              <label>{{ t('localRerankerModelPath') }}</label>
+              <input v-model="form.local_reranker_model_path" class="input" :placeholder="t('localRerankerModelPathPlaceholder')" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>{{ t('localFallbackBertModelPath') }}</label>
+            <input v-model="form.local_fallback_bert_model_path" class="input" :placeholder="t('localFallbackBertModelPathPlaceholder')" />
+          </div>
+          <div class="config-hint">
+            <span class="tag">{{ t('localModelHintTag') }}</span>
+            <span>{{ t('localModelHint') }}</span>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>{{ t('difyConfig') }}</h2>
         </div>
         <div v-if="loading" class="loading-mask">
           <span>{{ t('loading') }}</span>
@@ -120,7 +299,37 @@ import AdminLayout from './AdminLayout.vue'
 const { t } = useI18n()
 const loading = ref(false)
 const saving = ref(false)
+const queryStrategyOptions = [
+  // 管理员在这里决定用户问答优先走哪条链路；后端会按同名策略排序调用 provider。
+  { value: 'langchain_first', label: t('langchainFirst') },
+  { value: 'dify_first', label: t('difyFirst') },
+  { value: 'langchain_only', label: t('langchainOnly') },
+  { value: 'dify_only', label: t('difyOnly') },
+  { value: 'vector_only', label: t('vectorOnly') },
+]
 const form = ref({
+  query_strategy: 'langchain_first',
+  langchain_base_url: '',
+  langchain_api_key: '',
+  langchain_api_key_configured: false,
+  langchain_api_key_clear: false,
+  langchain_model: 'gpt-4o-mini',
+  langchain_embedding_model: 'bge-m3',
+  langchain_temperature: 0.2,
+  langchain_timeout_seconds: 45,
+  milvus_uri: '',
+  milvus_token: '',
+  milvus_token_configured: false,
+  milvus_token_clear: false,
+  milvus_collection: 'slc_compliance_docs',
+  vector_top_k: 4,
+  vector_chunk_size: 1000,
+  vector_chunk_overlap: 150,
+  local_embedding_enabled: true,
+  local_embedding_model_path: 'models/bge-m3',
+  local_reranker_enabled: true,
+  local_reranker_model_path: 'models/bge-reranker-large',
+  local_fallback_bert_model_path: 'models/bert-base-chinese',
   dify_base_url: '',
   dify_api_key: '',
   dify_api_key_configured: false,
@@ -141,6 +350,30 @@ const fetchConfig = async () => {
   try {
     const res = await getSystemConfig()
     if (res.data) {
+      form.value.query_strategy = res.data.query_strategy || 'langchain_first'
+      // 后端不会把真实密钥回传给前端，只返回 *_configured 标记。
+      // 因此前端密码框保持空值，用占位符告诉管理员“已配置”。
+      form.value.langchain_base_url = res.data.langchain_base_url || ''
+      form.value.langchain_api_key = ''
+      form.value.langchain_api_key_configured = res.data.langchain_api_key_configured || false
+      form.value.langchain_api_key_clear = false
+      form.value.langchain_model = res.data.langchain_model || 'gpt-4o-mini'
+      form.value.langchain_embedding_model = res.data.langchain_embedding_model || 'bge-m3'
+      form.value.langchain_temperature = res.data.langchain_temperature ?? 0.2
+      form.value.langchain_timeout_seconds = res.data.langchain_timeout_seconds || 45
+      form.value.milvus_uri = res.data.milvus_uri || ''
+      form.value.milvus_token = ''
+      form.value.milvus_token_configured = res.data.milvus_token_configured || false
+      form.value.milvus_token_clear = false
+      form.value.milvus_collection = res.data.milvus_collection || 'slc_compliance_docs'
+      form.value.vector_top_k = res.data.vector_top_k || 4
+      form.value.vector_chunk_size = res.data.vector_chunk_size || 1000
+      form.value.vector_chunk_overlap = res.data.vector_chunk_overlap ?? 150
+      form.value.local_embedding_enabled = res.data.local_embedding_enabled ?? true
+      form.value.local_embedding_model_path = res.data.local_embedding_model_path || 'models/bge-m3'
+      form.value.local_reranker_enabled = res.data.local_reranker_enabled ?? true
+      form.value.local_reranker_model_path = res.data.local_reranker_model_path || 'models/bge-reranker-large'
+      form.value.local_fallback_bert_model_path = res.data.local_fallback_bert_model_path || 'models/bert-base-chinese'
       form.value.dify_base_url = res.data.dify_base_url || ''
       form.value.dify_api_key = ''
       form.value.dify_api_key_configured = res.data.dify_api_key_configured || false
@@ -159,8 +392,8 @@ const fetchConfig = async () => {
 }
 
 const toggleSecretClear = (provider) => {
-  const clearKey = `${provider}_api_key_clear`
-  const secretKey = `${provider}_api_key`
+  const clearKey = provider === 'milvus' ? 'milvus_token_clear' : `${provider}_api_key_clear`
+  const secretKey = provider === 'milvus' ? 'milvus_token' : `${provider}_api_key`
   form.value[clearKey] = !form.value[clearKey]
   if (form.value[clearKey]) {
     form.value[secretKey] = ''
@@ -171,6 +404,34 @@ const saveConfig = async () => {
   saving.value = true
   try {
     const payload = {}
+    // 只提交管理员实际可编辑的运行时配置。密钥为空时不覆盖旧值；
+    // 点击“清除”才显式传 null 给后端删除密钥。
+    if (form.value.query_strategy !== undefined) payload.query_strategy = form.value.query_strategy
+    if (form.value.langchain_base_url !== undefined) payload.langchain_base_url = form.value.langchain_base_url
+    if (form.value.langchain_api_key_clear) {
+      payload.langchain_api_key = null
+    } else if (cleanSecret(form.value.langchain_api_key)) {
+      payload.langchain_api_key = cleanSecret(form.value.langchain_api_key)
+    }
+    if (form.value.langchain_model !== undefined) payload.langchain_model = form.value.langchain_model
+    if (form.value.langchain_embedding_model !== undefined) payload.langchain_embedding_model = form.value.langchain_embedding_model
+    if (form.value.langchain_temperature !== undefined && form.value.langchain_temperature !== '') payload.langchain_temperature = form.value.langchain_temperature
+    if (form.value.langchain_timeout_seconds !== undefined && form.value.langchain_timeout_seconds !== '') payload.langchain_timeout_seconds = form.value.langchain_timeout_seconds
+    if (form.value.milvus_uri !== undefined) payload.milvus_uri = form.value.milvus_uri
+    if (form.value.milvus_token_clear) {
+      payload.milvus_token = null
+    } else if (cleanSecret(form.value.milvus_token)) {
+      payload.milvus_token = cleanSecret(form.value.milvus_token)
+    }
+    if (form.value.milvus_collection !== undefined) payload.milvus_collection = form.value.milvus_collection
+    if (form.value.vector_top_k !== undefined && form.value.vector_top_k !== '') payload.vector_top_k = form.value.vector_top_k
+    if (form.value.vector_chunk_size !== undefined && form.value.vector_chunk_size !== '') payload.vector_chunk_size = form.value.vector_chunk_size
+    if (form.value.vector_chunk_overlap !== undefined && form.value.vector_chunk_overlap !== '') payload.vector_chunk_overlap = form.value.vector_chunk_overlap
+    payload.local_embedding_enabled = Boolean(form.value.local_embedding_enabled)
+    if (form.value.local_embedding_model_path !== undefined) payload.local_embedding_model_path = form.value.local_embedding_model_path
+    payload.local_reranker_enabled = Boolean(form.value.local_reranker_enabled)
+    if (form.value.local_reranker_model_path !== undefined) payload.local_reranker_model_path = form.value.local_reranker_model_path
+    if (form.value.local_fallback_bert_model_path !== undefined) payload.local_fallback_bert_model_path = form.value.local_fallback_bert_model_path
     if (form.value.dify_base_url !== undefined) payload.dify_base_url = form.value.dify_base_url
     if (form.value.dify_api_key_clear) {
       payload.dify_api_key = null
@@ -226,6 +487,20 @@ onMounted(fetchConfig)
   margin-bottom: 20px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
+}
+
+.toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.toggle-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  color: var(--text);
 }
 
 .section-title h2 {

@@ -31,7 +31,7 @@ class RequestGuardMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         content_length = request.headers.get("content-length")
-        upload_paths = ("/sources/upload", "/chat-with-file")
+        upload_paths = ("/sources/upload", "/vector-documents/upload", "/chat-with-file")
         limit = settings.max_upload_bytes if request.url.path.endswith(upload_paths) else settings.max_request_bytes
         if content_length and int(content_length) > limit:
             return JSONResponse(status_code=413, content={"detail": "请求体过大"})
@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="企业用工与社保合规智能平台 API",
-    description="前后端分离、多租户隔离、Dify/RAGFlow 可配置接入的企业合规智能问答平台。",
+    description="前后端分离、多租户隔离、LangChain/Dify/RAGFlow 可配置接入的企业合规智能问答平台。",
     version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",

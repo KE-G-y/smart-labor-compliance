@@ -33,9 +33,12 @@ docker compose up -d --build
 访问入口：
 
 - 前端页面：`http://localhost:3000`
+- 项目说明文档中心：`http://localhost:3000/project-docs`
 - 后端接口文档：`http://localhost:8000/docs`
 - Milvus WebUI：`http://localhost:9091/webui/`
 - MinIO Console：`http://localhost:9001`
+
+前端 `/project-docs` 是独立说明文档入口，不显示在主导航中；前端 `/docs` 仅重定向到 `/project-docs`。后端 `/docs` 是 FastAPI Swagger/OpenAPI。
 
 默认初始账号：
 

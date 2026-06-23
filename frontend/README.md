@@ -27,16 +27,19 @@ npm run dev
 
 - `/`：用户问答，展示来源、风险等级、办事路径、反馈
 - `/history`：当前租户和浏览器用户的历史记录
-- `/project-docs`：项目说明文档中心，在线查看 README、架构、部署、知识库和排障文档
+- `/project-docs`：项目说明文档中心，在线查看 README、架构、部署、知识库和排障文档；该路由独立访问，不显示在顶部主导航中
+- `/docs`：兼容旧入口，自动重定向到 `/project-docs`
 - `/admin/login`：管理后台登录
 - `/admin`：统计、Dify/RAGFlow 在线状态
 - `/admin/tenants`：租户管理
 - `/admin/sources`：来源管理
+- `/admin/vector-versions`：Milvus 向量库版本管理、版本激活、归档和批量入库质量报告查看
 - `/admin/logs`：问答日志
 - `/admin/feedbacks`：反馈管理
 - `/admin/packages`：知识包管理
 - `/admin/tests`：验收测试问题
 - `/admin/accounts`：账号权限
+- `/admin/system-config`：查询方案、LangChain、Milvus、Dify/RAGFlow 和本地模型配置
 
 ## 国际化
 

@@ -62,7 +62,7 @@ Content-Type: multipart/form-data
 建议流程：
 
 1. 启动 `mysql`、`milvus`、`backend`、`frontend`。
-2. 配置 `LANGCHAIN_API_KEY`、`LANGCHAIN_EMBEDDING_MODEL`、`MILVUS_URI`、`MILVUS_COLLECTION`。
+2. 配置 `MILVUS_URI`、`MILVUS_COLLECTION` 和 Embedding 能力。默认优先使用 `backend/models/bge-m3` 本地模型；如果本地模型依赖不可用，则需要配置 `LANGCHAIN_API_KEY` 和 `LANGCHAIN_EMBEDDING_MODEL`。
 3. 登录管理端，进入「来源管理」。
 4. 按 `upload_plan.csv` 上传 `documents/` 下的 Markdown 文件。
 5. 上传时选择对应租户；企业内部制度建议只给对应租户入库。

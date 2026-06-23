@@ -35,6 +35,8 @@
 ├── backend/                 # FastAPI 后端、模型、路由、服务与演示数据
 ├── frontend/                # Vue 3 + Vite 前端
 ├── docs/                    # 运维、安全、多租户、LangChain/Dify/RAGFlow 配合文档
+├── knowledge_base/           # LangChain/Milvus 入库资料、manifest 和 FAQ Markdown
+├── scripts/                  # 本地启动、停止和知识库资料整理脚本
 ├── sql/                     # MySQL 初始化参考脚本
 ├── 后端需求文档.md
 ├── 前端需求文档.md
@@ -61,6 +63,8 @@ START_LOCAL_SERVICES=0 ./scripts/start_project.sh
 
 - 前端页面：`http://localhost:3000`
 - 项目说明文档中心：`http://localhost:3000/project-docs`
+
+项目说明文档中心是独立访问入口，不显示在主导航中；前端旧路径 `/docs` 只做兼容跳转到 `/project-docs`。
 
 停止项目：
 
@@ -110,14 +114,18 @@ docker compose --profile tools run --rm vector-builder
 - [Docker 部署说明](docs/DOCKER_DEPLOYMENT.md)
 - [LangChain 知识库向量化整理说明](docs/KNOWLEDGE_BASE_VECTORIZATION.md)
 - [LangChain 重构说明](docs/LANGCHAIN_REFACTOR.md)
+- [问答耗时记录与优化方案](docs/CHAT_RESPONSE_TIME_OPTIMIZATION.md)
 - [Dify 与 RAGFlow 配合开发指南](docs/DIFY_RAGFLOW_GUIDE.md)
 - [安全与多租户设计说明](docs/SECURITY_AND_TENANCY.md)
+- [自动化测试报告](docs/AUTOMATED_TEST_REPORT.md)
+- [LangChain/Milvus 知识库转换资料 README](knowledge_base/langchain_vector_import/README.md)
+- [未纳入向量库资料说明](knowledge_base/langchain_vector_import/excluded_files.md)
 - [MySQL 初始化参考](sql/init_schema.sql)
 - [后端需求文档](后端需求文档.md)
 - [前端需求文档](前端需求文档.md)
 - [商业化项目书](企业用工与社保合规智能平台项目书_商业化正式版.md)
 
-项目启动后，可以直接访问 `http://localhost:3000/project-docs` 在线查看这些说明文档。后端 Swagger/OpenAPI 仍位于 `http://localhost:8000/docs`。
+项目启动后，可以直接访问 `http://localhost:3000/project-docs` 在线查看这些说明文档。该页面不出现在顶部主导航中；前端 `/docs` 会重定向到 `/project-docs`，后端 Swagger/OpenAPI 仍位于 `http://localhost:8000/docs`。
 
 ## 重要说明
 

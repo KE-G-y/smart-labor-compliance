@@ -75,7 +75,7 @@ npm run build
 
 - 状态：已完成。
 - 目标：针对第一轮发现的问题补充边界用例并修复业务缺陷。
-- 结果：全量通过，后端 `16 passed`；前端契约检查通过，`30` 个 API wrapper、`12` 个路由均匹配；`npm run build` 通过。
+- 结果：全量通过，后端 `16 passed`；前端契约检查通过，API wrapper 与主要路由均匹配；`npm run build` 通过。
 - 修改：
   - 新增发散边界测试：禁用知识包短路、跨租户重复来源、上传大小限制、Dify streaming 解析。
   - 来源列表/导出搜索扩展为 `title` + `source_code` + `url`。
@@ -87,7 +87,7 @@ npm run build
 - 结果：第一次新增边界回归 `19 passed / 1 failed`，失败原因为测试仅禁用了一个知识包，而当前租户仍存在其他 active 知识包；调整语义后最终全量通过。
 - 最终结果：
   - 后端：`20 passed, 7 warnings in 6.15s`。
-  - 前端契约：`Contract check passed: 30 API wrappers, 12 routes.`。
+  - 前端契约：当前脚本校验用户端、项目说明文档中心、管理端主要页面和向量版本页面；实际数量以 `frontend/scripts/contract-check.mjs` 输出为准。
   - 前端构建：`vite build` 成功。
 - 说明：`7 warnings` 来自依赖层的 passlib `crypt` 弃用提醒和 Pydantic V2 class-based config 弃用提醒，不影响本轮功能回归。
 

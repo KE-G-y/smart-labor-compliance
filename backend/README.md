@@ -9,7 +9,7 @@ FastAPI 后端负责认证、多租户隔离、问答日志、来源管理、反
 - `SQLAlchemy`：业务模型集中在 `app/models/`，查询逻辑可复用，并通过启动时的兼容补列逻辑支持演示库平滑升级。
 - `PyMySQL + MySQL`：与本机 Docker MySQL 配合简单，适合保存租户、账号、问答日志、来源目录、知识包和配置等结构化数据。
 - `JWT + bcrypt`：满足前后端分离登录态和密码哈希存储要求，配合角色权限实现平台超管、租户管理员、运营人员和只读人员的能力边界。
-- `LangChain/Milvus/Dify/RAGFlow 可配置接入`：后端通过服务层封装外部 AI 与知识库能力，LangChain 优先调用 OpenAI-compatible 模型并检索 Milvus 文档片段，Dify 作为兼容回退；系统内问题未命中知识库时不会基于 MySQL FAQ 或外部常识补充结论。
+- `LangChain/Milvus/Dify/RAGFlow 可配置接入`：后端通过服务层封装外部 AI 与知识库能力，LangChain 优先调用 OpenAI-compatible 模型并检索 Milvus 文档片段，Dify 作为兼容回退；管理员可在「系统配置」切换查询方案，系统内问题未命中知识库时不会基于 MySQL FAQ 或外部常识补充结论。
 
 ## 启动
 
@@ -36,7 +36,7 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 常用 LangChain 配置项：
 
 - `LANGCHAIN_API_KEY`：模型服务 API Key，需要从 OpenAI 或 OpenAI-compatible 模型服务商控制台创建
-- `LANGCHAIN_MODEL`：模型名称，默认 `qwen3.7-max`，由所选模型服务商支持列表决定
+- `LANGCHAIN_MODEL`：模型名称，默认 `gpt-4o-mini`，由所选模型服务商支持列表决定；也可以在管理端「系统配置」覆盖
 - `LANGCHAIN_EMBEDDING_MODEL`：Embedding 模型标识，默认 `bge-m3`；启用 `LOCAL_EMBEDDING_ENABLED=true` 时，入库与检索优先使用 `LOCAL_EMBEDDING_MODEL_PATH` 指向的本地模型
 - `LANGCHAIN_BASE_URL`：OpenAI-compatible 地址，可留空使用默认端点；接入代理、私有网关或国内模型服务时填写服务商提供的 Base URL
 - `LANGCHAIN_TEMPERATURE`：生成温度，范围 `0-2`
@@ -64,4 +64,4 @@ python -c "from app.database import init_db; init_db()"
 - 平台超管：`admin / Admin@123456`
 - 演示租户管理员：`tenant_admin / Tenant@123456 / demo-sx`
 
-项目说明文档接口位于 `app/routers/project_docs.py`，只读取白名单中的 Markdown 文件。更多说明见项目根目录的 `docs/DOCUMENTATION_INDEX.md`、`docs/OPERATION.md`、`docs/SECURITY_AND_TENANCY.md`。
+项目说明文档接口位于 `app/routers/project_docs.py`，后端路径为 `GET /api/project-docs` 和 `GET /api/project-docs/{doc_id}`，只读取白名单中的 Markdown 文件。前端独立访问路由是 `/project-docs`，旧前端 `/docs` 仅兼容跳转；FastAPI Swagger/OpenAPI 仍是后端 `/docs`。更多说明见项目根目录的 `docs/DOCUMENTATION_INDEX.md`、`docs/OPERATION.md`、`docs/SECURITY_AND_TENANCY.md`。

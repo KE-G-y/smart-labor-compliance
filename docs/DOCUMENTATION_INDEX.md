@@ -7,7 +7,7 @@
 - 项目说明文档中心：`http://localhost:3000/project-docs`
 - 后端 Swagger/OpenAPI：`http://localhost:8000/docs`
 
-说明文档中心的后端接口是 `GET /api/project-docs` 和 `GET /api/project-docs/{doc_id}`。接口只读取后端白名单中的 Markdown 文件，不接收任意文件路径，避免路径穿越和误读服务器文件。
+说明文档中心的后端接口是 `GET /api/project-docs` 和 `GET /api/project-docs/{doc_id}`。接口只读取后端白名单中的 Markdown 文件，不接收任意文件路径，避免路径穿越和误读服务器文件。前端 `/project-docs` 是独立访问路由，不显示在主导航中；前端 `/docs` 仅做兼容重定向，后端 FastAPI 的 Swagger/OpenAPI 仍是 `/docs`。
 
 ## 文档可信状态
 
@@ -71,7 +71,7 @@
 
 - 本地一键启动脚本：`./scripts/start_project.sh`，默认会准备 `backend/.env`，并在 Docker 可用时启动 `mysql`、`etcd`、`minio`、`milvus`。
 - 后端本地热重载：`scripts/start_project.sh` 默认 `BACKEND_RELOAD=1`；Docker 后端服务也使用 `uvicorn --reload` 并挂载 `./backend/app`、`./backend/scripts`。
-- 前端项目文档中心：`/project-docs` 是前端路由；后端 FastAPI 的 Swagger/OpenAPI 仍是 `/docs`。
+- 前端项目文档中心：`/project-docs` 是独立前端路由，不出现在主导航；前端 `/docs` 会重定向到 `/project-docs`；后端 FastAPI 的 Swagger/OpenAPI 仍是 `/docs`。
 - 完整 Docker 服务：`docker compose up -d --build` 会启动 `frontend`、`backend`、`mysql`、`milvus`、`etcd`、`minio`。
 - 自动构建向量库：`docker compose --profile tools run --rm vector-builder` 或在 `backend/` 下执行 `python scripts/build_milvus_vector_db.py --manifest ../knowledge_base/langchain_vector_import/manifest.csv --tenant-code demo-sx --activate`。
 - 系统内问题必须基于 Milvus 知识库命中回答；未命中时返回知识库边界提示，不使用 MySQL FAQ 或模型外部常识兜底。

@@ -471,7 +471,6 @@ const submitQuestion = async () => {
     answerEvaluation.value = data.evaluation || null
     responseTime.value = normalizeResponseTime(data.response_time ?? data.evaluation?.metrics?.response_time_ms)
     provider.value = data.provider || 'kb_no_match'
-    fallbackReason.value = data.fallback_reason || ''
     riskLevel.value = riskFromAnswer(data.answer) || normalizeRiskLevel(data.risk_level) || 'medium'
     questionId.value = data.question_id
     answeredQuestion.value = submittedQuestion

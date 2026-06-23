@@ -14,6 +14,7 @@ flowchart LR
   AdminAPI --> Config["runtime_config\n运行时配置"]
   AdminAPI --> Upload["vector-documents/upload\n文档解析入库"]
   AdminAPI --> VersionAPI["vector-versions\n向量版本管理"]
+  AdminAPI --> ProjectDocs["project-docs\n项目说明文档白名单接口"]
 
   Answer --> MilvusSvc["MilvusVectorService\n向量检索"]
   Answer --> LC["LangChainComplianceProvider\nPrompt + LLM"]
@@ -41,6 +42,7 @@ flowchart LR
 - `Milvus` 保存知识库向量：政策法规、企业制度、办事指南、FAQ 标准问答都变成 chunk 向量后存这里。
 - `LangChain` 负责把 Milvus 检索片段放进 Prompt，再调用 OpenAI-compatible 模型生成回答。
 - `Dify` 作为兼容回退和附件解析链路，管理员可选择优先级。
+- 项目说明文档中心通过前端 `/project-docs` 独立访问，后端只暴露白名单接口 `/api/project-docs`；前端 `/docs` 仅兼容跳转，后端 `/docs` 仍是 Swagger/OpenAPI。
 
 ## 2. 后端模块分工
 
@@ -56,6 +58,7 @@ flowchart LR
 | 向量版本 | `backend/app/services/vector_version_service.py` | 记录、激活、归档 Milvus collection 版本 |
 | 批量构建脚本 | `backend/scripts/build_milvus_vector_db.py` | 从 `manifest.csv` 自动构建 Milvus 向量库版本 |
 | 知识库整理脚本 | `scripts/prepare_langchain_knowledge_base.py` | 把原始资料整理成 Markdown、manifest 和上传计划 |
+| 项目说明文档接口 | `backend/app/routers/project_docs.py` | 只读取白名单 Markdown，供前端 `/project-docs` 在线预览 |
 
 ## 3. 用户问答流程
 
@@ -313,3 +316,4 @@ flowchart LR
 7. `frontend/src/views/admin/SystemConfig.vue`：管理员如何配置链路。
 8. `frontend/src/views/admin/Sources.vue`：管理员如何上传资料入库。
 9. `frontend/src/views/admin/VectorVersions.vue`：管理员如何激活和归档向量版本。
+10. `frontend/src/views/Docs.vue` 与 `backend/app/routers/project_docs.py`：项目说明文档中心如何加载白名单文档。

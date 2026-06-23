@@ -11,13 +11,14 @@
           </div>
         </div>
         <AppTable
+          class="version-table"
           :columns="versionColumns"
           :rows="versions"
           :empty-text="t('noVectorVersions')"
           :loading="loading"
           :loading-text="t('loading')"
           :sequence-start="sequenceStart"
-          min-width="1480px"
+          min-width="100%"
         >
           <template #cell-version="{ row }">
             <div class="version-name-cell">
@@ -140,6 +141,54 @@
         </section>
       </section>
     </div>
+    <div v-if="confirmDialog.open" class="modal-mask confirm-mask" @click.self="closeConfirmDialog">
+      <div class="modal confirm-modal" role="dialog" aria-modal="true" :aria-labelledby="confirmTitleId">
+        <div class="confirm-header">
+          <span :class="['confirm-icon', confirmDialog.variant]">{{ confirmDialog.variant === 'danger' ? '!' : '✓' }}</span>
+          <div>
+            <h2 :id="confirmTitleId">{{ confirmDialog.title }}</h2>
+            <p>{{ confirmDialog.message }}</p>
+          </div>
+        </div>
+        <div v-if="confirmDialog.version" class="confirm-meta">
+          <div>
+            <span>{{ t('vectorVersion') }}</span>
+            <strong>{{ confirmDialog.version.version || '-' }}</strong>
+          </div>
+          <div>
+            <span>{{ t('milvusCollection') }}</span>
+            <strong>{{ confirmDialog.version.collection_name || '-' }}</strong>
+          </div>
+        </div>
+        <div class="modal-actions confirm-actions">
+          <button class="btn" type="button" :disabled="confirmDialog.loading" @click="closeConfirmDialog">
+            {{ t('cancel') }}
+          </button>
+          <button
+            :class="['btn', confirmDialog.variant === 'danger' ? 'danger' : 'primary']"
+            type="button"
+            :disabled="confirmDialog.loading"
+            @click="runConfirmAction"
+          >
+            {{ confirmDialog.loading ? t('processing') : confirmDialog.confirmText }}
+          </button>
+        </div>
+      </div>
+    </div>
+    <div v-if="notice.open" class="modal-mask confirm-mask" @click.self="closeNotice">
+      <div class="modal notice-modal" role="status" aria-live="polite">
+        <div class="confirm-header">
+          <span :class="['confirm-icon', notice.variant]">{{ notice.variant === 'danger' ? '!' : '✓' }}</span>
+          <div>
+            <h2>{{ notice.title }}</h2>
+            <p>{{ notice.message }}</p>
+          </div>
+        </div>
+        <div class="modal-actions confirm-actions">
+          <button class="btn primary" type="button" @click="closeNotice">{{ t('close') }}</button>
+        </div>
+      </div>
+    </div>
   </AdminLayout>
 </template>
 
@@ -162,6 +211,23 @@ const pageSize = ref(20)
 const total = ref(0)
 const status = ref('')
 const selectedQualityVersion = ref(null)
+const confirmTitleId = 'vector-version-confirm-title'
+const confirmDialog = ref({
+  open: false,
+  title: '',
+  message: '',
+  confirmText: '',
+  variant: 'primary',
+  version: null,
+  loading: false,
+  action: null
+})
+const notice = ref({
+  open: false,
+  title: '',
+  message: '',
+  variant: 'success'
+})
 
 const sequenceStart = computed(() => (page.value - 1) * pageSize.value + 1)
 const selectedQualityReports = computed(() => selectedQualityVersion.value?.quality_reports || [])
@@ -176,17 +242,17 @@ const statusOptions = computed(() => [
   { value: 'archived', label: t('vectorVersionArchived') }
 ])
 const versionColumns = computed(() => [
-  { key: 'sequence', label: t('sequence'), width: '56px' },
-  { key: 'tenant_name', label: t('tenant'), width: '128px' },
-  { key: 'version', label: t('vectorVersion'), width: '150px' },
-  { key: 'collection_name', label: t('milvusCollection'), width: '210px' },
-  { key: 'status', label: t('status'), width: '96px' },
-  { key: 'indexed_count', label: t('vectorIndexedDocs'), width: '104px' },
-  { key: 'chunk_count', label: t('vectorChunks'), width: '92px' },
-  { key: 'quality_overview', label: t('vectorIngestQuality'), width: '132px' },
-  { key: 'embedding_model', label: t('langchainEmbeddingModel'), width: '150px' },
-  { key: 'build_finished_at', label: t('buildFinishedAt'), width: '154px' },
-  { key: 'action', label: t('action'), width: '196px', sticky: 'right' }
+  { key: 'sequence', label: t('sequence'), width: '52px' },
+  { key: 'tenant_name', label: t('tenant'), width: '116px' },
+  { key: 'version', label: t('vectorVersion'), width: '136px' },
+  { key: 'collection_name', label: t('milvusCollection'), width: '208px' },
+  { key: 'status', label: t('status'), width: '84px' },
+  { key: 'indexed_count', label: t('vectorIndexedDocs'), width: '84px' },
+  { key: 'chunk_count', label: t('vectorChunks'), width: '84px' },
+  { key: 'quality_overview', label: t('vectorIngestQuality'), width: '112px' },
+  { key: 'embedding_model', label: t('langchainEmbeddingModel'), width: '126px' },
+  { key: 'build_finished_at', label: t('buildFinishedAt'), width: '148px' },
+  { key: 'action', label: t('action'), width: '132px', sticky: 'right' }
 ])
 
 const vectorStatusLabel = (value) => {
@@ -289,39 +355,198 @@ const queryVersions = () => {
   fetchVersions()
 }
 
-const activate = async (row) => {
-  if (!canActivate(row)) return
-  if (!confirm(t('activateVectorVersionConfirm'))) return
-  actionId.value = row.id
-  try {
-    // 激活版本会让后端把当前租户的 milvus_collection 切换到该 collection。
-    await activateVectorVersion(row.id, { tenant_id: row.tenant_id })
-    await fetchVersions()
-    alert(t('activateVectorVersionSuccess'))
-  } catch (e) {
-    const errorMessage = e.response?.data?.message || e.response?.data?.detail || e.message || t('activateVectorVersionFailed')
-    alert(errorMessage)
-  } finally {
-    actionId.value = null
+const openConfirmDialog = ({ title, message, confirmText, variant = 'primary', version, action }) => {
+  confirmDialog.value = {
+    open: true,
+    title,
+    message,
+    confirmText,
+    variant,
+    version,
+    loading: false,
+    action
   }
 }
 
-const archive = async (row) => {
-  if (!confirm(t('archiveVectorVersionConfirm'))) return
-  actionId.value = row.id
-  try {
-    // 归档只是隐藏/停用版本记录，不删除 Milvus 数据，便于后续人工清理或回滚。
-    await archiveVectorVersion(row.id, { tenant_id: row.tenant_id })
-    await fetchVersions()
-  } finally {
-    actionId.value = null
+const closeConfirmDialog = () => {
+  if (confirmDialog.value.loading) return
+  confirmDialog.value.open = false
+}
+
+const showNotice = (message, variant = 'success') => {
+  notice.value = {
+    open: true,
+    title: variant === 'danger' ? t('operationFailed') : t('operationSuccess'),
+    message,
+    variant
   }
+}
+
+const closeNotice = () => {
+  notice.value.open = false
+}
+
+const runConfirmAction = async () => {
+  const action = confirmDialog.value.action
+  if (!action || confirmDialog.value.loading) return
+  confirmDialog.value.loading = true
+  try {
+    await action()
+    confirmDialog.value.open = false
+  } catch (e) {
+    const errorMessage = e.response?.data?.message || e.response?.data?.detail || e.message || t('activateVectorVersionFailed')
+    confirmDialog.value.open = false
+    showNotice(errorMessage, 'danger')
+  } finally {
+    confirmDialog.value.loading = false
+  }
+}
+
+const activate = (row) => {
+  if (!canActivate(row)) return
+  openConfirmDialog({
+    title: t('activateVectorVersionTitle'),
+    message: t('activateVectorVersionConfirm'),
+    confirmText: t('activateVectorVersion'),
+    variant: 'primary',
+    version: row,
+    action: async () => {
+      actionId.value = row.id
+      try {
+        // 激活版本会让后端把当前租户的 milvus_collection 切换到该 collection。
+        await activateVectorVersion(row.id, { tenant_id: row.tenant_id })
+        await fetchVersions()
+        showNotice(t('activateVectorVersionSuccess'))
+      } finally {
+        actionId.value = null
+      }
+    }
+  })
+}
+
+const archive = (row) => {
+  openConfirmDialog({
+    title: t('archiveVectorVersionTitle'),
+    message: t('archiveVectorVersionConfirm'),
+    confirmText: t('archiveVectorVersion'),
+    variant: 'danger',
+    version: row,
+    action: async () => {
+      actionId.value = row.id
+      try {
+        // 归档只是隐藏/停用版本记录，不删除 Milvus 数据，便于后续人工清理或回滚。
+        await archiveVectorVersion(row.id, { tenant_id: row.tenant_id })
+        await fetchVersions()
+        showNotice(t('archiveVectorVersionSuccess'))
+      } finally {
+        actionId.value = null
+      }
+    }
+  })
 }
 
 onMounted(fetchVersions)
 </script>
 
 <style scoped>
+.confirm-mask {
+  z-index: 80;
+}
+
+.confirm-modal,
+.notice-modal {
+  width: min(560px, calc(100vw - 32px));
+  padding: 22px;
+  gap: 18px;
+}
+
+.confirm-header {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.confirm-header h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.confirm-header p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+.confirm-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(37, 99, 235, 0.12);
+  color: var(--primary);
+  font-weight: 900;
+}
+
+.confirm-icon.danger {
+  background: rgba(220, 38, 38, 0.12);
+  color: #b91c1c;
+}
+
+.confirm-icon.success {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+}
+
+.confirm-meta {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.confirm-meta div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.confirm-meta span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.confirm-meta strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.confirm-actions {
+  padding-top: 4px;
+}
+
+@media (max-width: 560px) {
+  .confirm-modal,
+  .notice-modal {
+    padding: 18px;
+  }
+
+  .confirm-header {
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .confirm-icon {
+    width: 36px;
+    height: 36px;
+  }
+}
+
 .version-name-cell {
   min-width: 0;
   display: grid;
@@ -339,6 +564,126 @@ onMounted(fetchVersions)
 .version-name-cell span {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.version-table :deep(table) {
+  width: 100% !important;
+  min-width: 0 !important;
+  table-layout: fixed;
+}
+
+.version-table :deep(th),
+.version-table :deep(td) {
+  min-width: 0;
+}
+
+.version-table :deep(td) {
+  overflow: hidden;
+}
+
+.version-table :deep(td:nth-child(3)),
+.version-table :deep(td:nth-child(4)),
+.version-table :deep(td:nth-child(9)) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.version-table :deep(td:nth-child(11)) {
+  white-space: nowrap;
+}
+
+.version-table :deep(th:nth-child(1)),
+.version-table :deep(td:nth-child(1)) {
+  width: 52px !important;
+}
+
+.version-table :deep(colgroup col:nth-child(1)) {
+  width: 52px !important;
+}
+
+.version-table :deep(th:nth-child(2)),
+.version-table :deep(td:nth-child(2)) {
+  width: 116px !important;
+}
+
+.version-table :deep(colgroup col:nth-child(2)) {
+  width: 116px !important;
+}
+
+.version-table :deep(th:nth-child(3)),
+.version-table :deep(td:nth-child(3)) {
+  width: 136px !important;
+}
+
+.version-table :deep(colgroup col:nth-child(3)) {
+  width: 136px !important;
+}
+
+.version-table :deep(th:nth-child(4)),
+.version-table :deep(td:nth-child(4)) {
+  width: 208px !important;
+}
+
+.version-table :deep(colgroup col:nth-child(4)) {
+  width: 208px !important;
+}
+
+.version-table :deep(th:nth-child(5)),
+.version-table :deep(td:nth-child(5)) {
+  width: 84px !important;
+}
+
+.version-table :deep(colgroup col:nth-child(5)) {
+  width: 84px !important;
+}
+
+.version-table :deep(th:nth-child(6)),
+.version-table :deep(td:nth-child(6)),
+.version-table :deep(th:nth-child(7)),
+.version-table :deep(td:nth-child(7)) {
+  width: 84px !important;
+}
+
+.version-table :deep(colgroup col:nth-child(6)),
+.version-table :deep(colgroup col:nth-child(7)) {
+  width: 84px !important;
+}
+
+.version-table :deep(th:nth-child(8)),
+.version-table :deep(td:nth-child(8)) {
+  width: 112px !important;
+}
+
+.version-table :deep(colgroup col:nth-child(8)) {
+  width: 112px !important;
+}
+
+.version-table :deep(th:nth-child(9)),
+.version-table :deep(td:nth-child(9)) {
+  width: 126px !important;
+}
+
+.version-table :deep(colgroup col:nth-child(9)) {
+  width: 126px !important;
+}
+
+.version-table :deep(th:nth-child(10)),
+.version-table :deep(td:nth-child(10)) {
+  width: 148px !important;
+}
+
+.version-table :deep(colgroup col:nth-child(10)) {
+  width: 148px !important;
+}
+
+.version-table :deep(th:nth-child(11)),
+.version-table :deep(td:nth-child(11)) {
+  width: 132px !important;
+}
+
+.version-table :deep(colgroup col:nth-child(11)) {
+  width: 132px !important;
 }
 
 .quality-overview-cell {
@@ -463,6 +808,19 @@ onMounted(fetchVersions)
 .quality-report-block p,
 .quality-more {
   margin: 0;
+}
+
+.table-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.table-actions .btn {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding-inline: 10px;
 }
 
 .table-actions .btn.muted {

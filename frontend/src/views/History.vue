@@ -169,6 +169,31 @@
         </div>
       </div>
     </Teleport>
+    <AppDialog
+      :open="confirmDialog.open"
+      mode="confirm"
+      :variant="confirmDialog.variant"
+      :title="confirmDialog.title"
+      :message="confirmDialog.message"
+      :confirm-text="confirmDialog.confirmText"
+      :cancel-text="confirmDialog.cancelText"
+      :loading-text="t('processing')"
+      :loading="confirmDialog.loading"
+      :details="confirmDialog.details"
+      @confirm="runConfirm"
+      @cancel="closeConfirm"
+    />
+    <AppDialog
+      :open="messageDialog.open"
+      mode="message"
+      :variant="messageDialog.variant"
+      :title="messageDialog.title"
+      :message="messageDialog.message"
+      :close-text="t('close')"
+      :details="messageDialog.details"
+      @confirm="closeMessage"
+      @cancel="closeMessage"
+    />
   </div>
 </template>
 
@@ -176,13 +201,16 @@
 import { computed, onMounted, ref } from 'vue'
 import { clearHistory, exportHistory, getHistory, getTenantPublic } from '@/api'
 import { useI18n } from '@/i18n'
+import { useDialog } from '@/composables/useDialog'
 import { renderMarkdown } from '@/utils/markdown'
 import { displayedRiskLevel } from '@/utils/risk'
+import AppDialog from '@/components/AppDialog.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import AppTopbar from '@/components/AppTopbar.vue'
 
 const { t, formatDateTime, riskLabel, statusLabel } = useI18n()
+const { messageDialog, confirmDialog, showMessage, closeMessage, openConfirm, closeConfirm, runConfirm } = useDialog(t)
 const tenant = ref({})
 const items = ref([])
 const total = ref(0)
@@ -289,7 +317,7 @@ const exportCurrent = () => exportHistory(requestParams())
 
 const exportSelected = () => {
   if (!selectedIds.value.length) {
-    alert(t('noSelection'))
+    showMessage(t('noSelection'), { variant: 'warning' })
     return
   }
   exportHistory({ user_id: userId.value, ids: selectedIds.value.join(',') })
@@ -301,12 +329,20 @@ const exportOne = (item) => {
 }
 
 const clearAll = async () => {
-  if (!confirm(t('clearHistoryConfirm'))) return
-  await clearHistory(userId.value)
-  items.value = []
-  total.value = 0
-  selectedIds.value = []
-  closeDetail()
+  openConfirm({
+    title: t('clear'),
+    message: t('clearHistoryConfirm'),
+    confirmText: t('clear'),
+    variant: 'danger',
+    successMessage: t('clearHistorySuccess'),
+    action: async () => {
+      await clearHistory(userId.value)
+      items.value = []
+      total.value = 0
+      selectedIds.value = []
+      closeDetail()
+    }
+  })
 }
 
 const openDetail = (item) => {

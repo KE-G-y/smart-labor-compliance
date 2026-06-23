@@ -303,6 +303,17 @@
         </div>
       </section>
     </div>
+    <AppDialog
+      :open="messageDialog.open"
+      mode="message"
+      :variant="messageDialog.variant"
+      :title="messageDialog.title"
+      :message="messageDialog.message"
+      :close-text="t('close')"
+      :details="messageDialog.details"
+      @confirm="closeMessage"
+      @cancel="closeMessage"
+    />
   </AdminLayout>
 </template>
 
@@ -310,10 +321,13 @@
 import { computed, onMounted, ref } from 'vue'
 import { activateVectorVersion, getSystemConfig, getVectorVersions, updateSystemConfig } from '@/api'
 import { useI18n } from '@/i18n'
+import { useDialog } from '@/composables/useDialog'
+import AppDialog from '@/components/AppDialog.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import AdminLayout from './AdminLayout.vue'
 
 const { t } = useI18n()
+const { messageDialog, showMessage, closeMessage } = useDialog(t)
 const loading = ref(false)
 const saving = ref(false)
 const vectorVersionsLoading = ref(false)
@@ -533,12 +547,18 @@ const saveConfig = async () => {
       const version = selectedVectorVersion.value
       await activateVectorVersion(selectedId, version?.tenant_id ? { tenant_id: version.tenant_id } : {})
     }
-    alert(t('saveSuccess') || '保存成功')
+    showMessage(t('saveSuccess') || '保存成功', {
+      title: t('operationSuccess'),
+      variant: 'success'
+    })
     await fetchConfig()
     await fetchVectorVersions()
   } catch (e) {
     const errorMessage = e.response?.data?.message || e.response?.data?.detail || e.message || t('saveFailed') || '保存失败'
-    alert(errorMessage)
+    showMessage(errorMessage, {
+      title: t('operationFailed'),
+      variant: 'danger'
+    })
   } finally {
     saving.value = false
   }

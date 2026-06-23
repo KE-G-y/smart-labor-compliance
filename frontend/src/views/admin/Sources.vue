@@ -100,7 +100,7 @@
               </button>
               <button v-if="isReviewed(row.review_status)" class="btn" @click="openSourceDetail(row)">{{ t('detail') }}</button>
               <button v-else class="btn" @click="editSource(row)">{{ t('edit') }}</button>
-              <button class="btn danger" @click="removeSource(row.id)">{{ t('delete') }}</button>
+              <button class="btn danger" @click="removeSource(row)">{{ t('delete') }}</button>
             </div>
           </template>
         </AppTable>
@@ -252,6 +252,31 @@
         </div>
       </div>
     </Teleport>
+    <AppDialog
+      :open="confirmDialog.open"
+      mode="confirm"
+      :variant="confirmDialog.variant"
+      :title="confirmDialog.title"
+      :message="confirmDialog.message"
+      :confirm-text="confirmDialog.confirmText"
+      :cancel-text="confirmDialog.cancelText"
+      :loading-text="t('processing')"
+      :loading="confirmDialog.loading"
+      :details="confirmDialog.details"
+      @confirm="runConfirm"
+      @cancel="closeConfirm"
+    />
+    <AppDialog
+      :open="messageDialog.open"
+      mode="message"
+      :variant="messageDialog.variant"
+      :title="messageDialog.title"
+      :message="messageDialog.message"
+      :close-text="t('close')"
+      :details="messageDialog.details"
+      @confirm="closeMessage"
+      @cancel="closeMessage"
+    />
   </AdminLayout>
 </template>
 
@@ -259,6 +284,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { addSource, batchSources, deleteSource, exportSources, getSources, importSources, reviewSource, updateSource, uploadSourceFile, uploadVectorDocument } from '@/api'
 import { useI18n } from '@/i18n'
+import { useDialog } from '@/composables/useDialog'
+import AppDialog from '@/components/AppDialog.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import AppTable from '@/components/AppTable.vue'
@@ -266,6 +293,7 @@ import EllipsisText from '@/components/EllipsisText.vue'
 import AdminLayout from './AdminLayout.vue'
 
 const { t, formatDateTime } = useI18n()
+const { messageDialog, confirmDialog, showMessage, closeMessage, openConfirm, closeConfirm, runConfirm } = useDialog(t)
 const sources = ref([])
 const total = ref(0)
 const page = ref(1)
@@ -413,10 +441,21 @@ const switchSourceMode = (mode) => {
   sourceMode.value = mode
   formError.value = ''
 }
-const removeSource = async (id) => {
-  if (!confirm(t('deleteSourceConfirm'))) return
-  await deleteSource(id)
-  fetchSources()
+const removeSource = (source) => {
+  openConfirm({
+    title: t('delete'),
+    message: t('deleteSourceConfirm'),
+    confirmText: t('delete'),
+    variant: 'danger',
+    details: [
+      { label: t('title'), value: source.title },
+      { label: t('code'), value: source.source_code }
+    ],
+    action: async () => {
+      await deleteSource(source.id)
+      await fetchSources()
+    }
+  })
 }
 const toggleReview = async (item) => {
   const nextStatus = isReviewed(item.review_status) ? '待人工复核' : '已复核'
@@ -435,7 +474,7 @@ const selectedExportParams = () => ({ ids: selectedIds.value.join(',') })
 const exportCurrentSources = () => exportSources({})
 const exportSelectedSources = () => {
   if (!selectedIds.value.length) {
-    alert(t('noSelection'))
+    showMessage(t('noSelection'), { variant: 'warning' })
     return
   }
   exportSources(selectedExportParams())
@@ -445,25 +484,36 @@ const handleImport = async (event) => {
   event.target.value = ''
   if (!file) return
   const res = await importSources(file)
-  alert(`${t('importFinished')}：${res.data?.imported || 0}/${res.data?.updated || 0}/${res.data?.skipped || 0}`)
+  showMessage(`${t('importFinished')}：${res.data?.imported || 0}/${res.data?.updated || 0}/${res.data?.skipped || 0}`, {
+    title: t('importFinished'),
+    variant: 'success'
+  })
   fetchSources()
 }
 const batchMarkReviewed = async () => {
-  if (!selectedIds.value.length) return alert(t('noSelection'))
+  if (!selectedIds.value.length) return showMessage(t('noSelection'), { variant: 'warning' })
   await batchSources({ action: 'mark_reviewed', ids: selectedIds.value })
   fetchSources()
 }
 const batchMarkPending = async () => {
-  if (!selectedIds.value.length) return alert(t('noSelection'))
+  if (!selectedIds.value.length) return showMessage(t('noSelection'), { variant: 'warning' })
   await batchSources({ action: 'mark_pending', ids: selectedIds.value })
   fetchSources()
 }
-const batchDeleteSelected = async () => {
-  if (!selectedIds.value.length) return alert(t('noSelection'))
-  if (!confirm(t('deleteSourceConfirm'))) return
-  await batchSources({ action: 'delete', ids: selectedIds.value })
-  selectedIds.value = []
-  fetchSources()
+const batchDeleteSelected = () => {
+  if (!selectedIds.value.length) return showMessage(t('noSelection'), { variant: 'warning' })
+  openConfirm({
+    title: t('delete'),
+    message: t('deleteSourceConfirm'),
+    confirmText: t('delete'),
+    variant: 'danger',
+    details: [{ label: t('selectedRows'), value: selectedIds.value.length }],
+    action: async () => {
+      await batchSources({ action: 'delete', ids: selectedIds.value })
+      selectedIds.value = []
+      await fetchSources()
+    }
+  })
 }
 const resetForm = () => {
   editingId.value = null

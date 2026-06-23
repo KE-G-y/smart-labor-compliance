@@ -18,7 +18,7 @@
           </template>
           <template #cell-action="{ row }">
             <div class="table-actions">
-              <button class="btn danger" :disabled="row.role === 'super_admin'" @click="removeAccount(row.id)">{{ t('delete') }}</button>
+              <button class="btn danger" :disabled="row.role === 'super_admin'" @click="removeAccount(row)">{{ t('delete') }}</button>
             </div>
           </template>
         </AppTable>
@@ -48,6 +48,31 @@
         </div>
       </div>
     </Teleport>
+    <AppDialog
+      :open="confirmDialog.open"
+      mode="confirm"
+      :variant="confirmDialog.variant"
+      :title="confirmDialog.title"
+      :message="confirmDialog.message"
+      :confirm-text="confirmDialog.confirmText"
+      :cancel-text="confirmDialog.cancelText"
+      :loading-text="t('processing')"
+      :loading="confirmDialog.loading"
+      :details="confirmDialog.details"
+      @confirm="runConfirm"
+      @cancel="closeConfirm"
+    />
+    <AppDialog
+      :open="messageDialog.open"
+      mode="message"
+      :variant="messageDialog.variant"
+      :title="messageDialog.title"
+      :message="messageDialog.message"
+      :close-text="t('close')"
+      :details="messageDialog.details"
+      @confirm="closeMessage"
+      @cancel="closeMessage"
+    />
   </AdminLayout>
 </template>
 
@@ -55,6 +80,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { addAdmin, deleteAdmin, getAdmins, getRoles } from '@/api'
 import { useI18n } from '@/i18n'
+import { useDialog } from '@/composables/useDialog'
+import AppDialog from '@/components/AppDialog.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import AppTable from '@/components/AppTable.vue'
@@ -62,6 +89,7 @@ import EllipsisText from '@/components/EllipsisText.vue'
 import AdminLayout from './AdminLayout.vue'
 
 const { t, roleLabel } = useI18n()
+const { messageDialog, confirmDialog, closeMessage, openConfirm, closeConfirm, runConfirm } = useDialog(t)
 const admins = ref([])
 const roles = ref([])
 const total = ref(0)
@@ -114,10 +142,21 @@ const createAccount = async () => {
   closeCreateModal()
   fetchAdmins()
 }
-const removeAccount = async (id) => {
-  if (!confirm(t('deleteAccountConfirm'))) return
-  await deleteAdmin(id)
-  fetchAdmins()
+const removeAccount = (account) => {
+  openConfirm({
+    title: t('delete'),
+    message: t('deleteAccountConfirm'),
+    confirmText: t('delete'),
+    variant: 'danger',
+    details: [
+      { label: t('username'), value: account.username },
+      { label: t('role'), value: roleLabel(account.role, account.role_label) }
+    ],
+    action: async () => {
+      await deleteAdmin(account.id)
+      await fetchAdmins()
+    }
+  })
 }
 
 onMounted(() => {

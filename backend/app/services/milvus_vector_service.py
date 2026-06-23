@@ -35,6 +35,16 @@ HYBRID_SEARCH_PARAMS = [
     {"metric_type": "BM25", "params": {}},
 ]
 DENSE_SEARCH_PARAMS = {"metric_type": "L2", "params": {"ef": 64}}
+GENERATED_VECTOR_SECTION_HEADINGS = {
+    "来源元数据",
+    "元数据",
+    "入库提示",
+    "文档元数据",
+    "入库说明",
+    "入库建议",
+    "本地资料位置",
+}
+GENERATED_VECTOR_LINE_PREFIXES = ("来源URL", "抓取日期", "页面标题")
 
 SUPPORTED_VECTOR_EXTENSIONS = {
     ".txt",
@@ -231,8 +241,12 @@ class MilvusVectorService:
 
         # 2. Markdown frontmatter 和构建脚本传入的 manifest metadata 会合并。
         # 这样 FAQ001、来源编号、地区、风险等级等信息可以随 chunk 一起进入 Milvus。
+        frontmatter_metadata, text = _split_markdown_frontmatter(text)
+        text = _clean_vector_body_text(text)
+        if not text:
+            raise VectorStoreUnavailable("文档清理后没有可入库的业务正文")
         raw_metadata = {
-            **_parse_markdown_frontmatter(text),
+            **frontmatter_metadata,
             **(extra_metadata or {}),
         }
         metadata_document_id = sanitize_text(str(raw_metadata.get("document_id") or "")) or ""
@@ -268,9 +282,11 @@ class MilvusVectorService:
                 or "medium"
             )[:40]
 
-        # 4. 先分块再入库。chunk 太大影响召回精度，太小又容易丢上下文，
-        # 所以大小和重叠量由后台配置控制。
-        chunks = self._split_text(text, metadata)
+        # 4. FAQ 保持单文件单 chunk，普通资料继续按可调参数递归切分。
+        if document_type == "faq":
+            chunks = self._single_chunk_documents(text, metadata)
+        else:
+            chunks = self._split_text(text, metadata)
         store = self._vector_store()
         try:
             self._add_documents(store, chunks)
@@ -302,6 +318,14 @@ class MilvusVectorService:
                 raise
             store.add_documents(chunks)
 
+    def _single_chunk_documents(self, text: str, metadata: dict) -> list:
+        """把单文件内容作为一个 chunk 入库，适用于 FAQ 这类短文本。"""
+        try:
+            from langchain_core.documents import Document
+        except ImportError as exc:
+            raise VectorStoreUnavailable("FAQ 入库依赖 langchain-core 未安装") from exc
+        return [Document(page_content=text, metadata={**metadata, "chunk_index": 0})]
+
     def index_faq(
         self,
         *,
@@ -317,6 +341,8 @@ class MilvusVectorService:
             raise VectorStoreUnavailable("请先配置本地 Embedding 或 LangChain API Key，并确认 Milvus 连接")
 
         text = faq_to_vector_text(faq)
+        _, text = _split_markdown_frontmatter(text)
+        text = _clean_vector_body_text(text)
         if not text:
             raise VectorStoreUnavailable("FAQ 缺少可入库的问题或答案")
         document_id = faq_document_id(faq)
@@ -341,7 +367,7 @@ class MilvusVectorService:
         }
         metadata.update(_clean_metadata(extra_metadata or {}))
 
-        chunks = self._split_text(text, metadata)
+        chunks = self._single_chunk_documents(text, metadata)
         store = self._vector_store()
         self.delete_faq_vectors(faq=faq, tenant_id=tenant_id, store=store)
         try:
@@ -569,14 +595,26 @@ class MilvusVectorService:
         metadata = document.metadata or {}
         title = metadata.get("title") or metadata.get("filename") or "Milvus 知识片段"
         filename = metadata.get("filename")
-        chunk_index = metadata.get("chunk_index")
+        raw_chunk_index = metadata.get("chunk_index")
+        try:
+            chunk_index = int(raw_chunk_index) if raw_chunk_index is not None else None
+        except (TypeError, ValueError):
+            chunk_index = None
         document_type = metadata.get("document_type") or "document"
         label = "FAQ" if document_type == "faq" else "文档"
         prefix = f"[{label}] {filename or title}"
-        if chunk_index is not None:
-            prefix = f"{prefix} #chunk-{chunk_index}"
-        snippet = (sanitize_text(document.page_content) or "")[:260]
-        return SourceInfo(title=prefix, url=metadata.get("url") or None, snippet=snippet, source_type=document_type)
+        content = _clean_vector_body_text(sanitize_text(document.page_content) or "")
+        snippet = content[:260]
+        return SourceInfo(
+            title=prefix,
+            url=metadata.get("url") or None,
+            snippet=snippet,
+            content=content or None,
+            source_type=document_type,
+            document_id=str(metadata.get("document_id") or "") or None,
+            local_file=str(metadata.get("local_file") or "") or None,
+            chunk_index=chunk_index,
+        )
 
 
 @lru_cache(maxsize=1)
@@ -618,19 +656,17 @@ def _normalize_whitespace(text: str) -> str:
     return text.strip()
 
 
-def _parse_markdown_frontmatter(text: str) -> dict[str, str]:
-    """读取 Markdown 顶部的简易 frontmatter。
-
-    知识库整理脚本会在文档头部写入 document_id、kb_category、region 等字段，
-    这里解析出来后放入 Milvus metadata。
-    """
+def _split_markdown_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    """拆出 Markdown 顶部 frontmatter，避免 YAML 进入向量正文。"""
     if not text.startswith("---"):
-        return {}
+        return {}, text
     end = text.find("\n---", 3)
     if end == -1:
-        return {}
+        return {}, text
+    raw_metadata = text[3:end].strip()
+    body = text[end + len("\n---") :].lstrip("\n")
     metadata: dict[str, str] = {}
-    for raw_line in text[3:end].strip().splitlines():
+    for raw_line in raw_metadata.splitlines():
         if ":" not in raw_line:
             continue
         key, raw_value = raw_line.split(":", 1)
@@ -645,7 +681,46 @@ def _parse_markdown_frontmatter(text: str) -> dict[str, str]:
             except (TypeError, ValueError, json.JSONDecodeError):
                 value = value.strip("'\"")
         metadata[key] = value
-    return metadata
+    return metadata, body
+
+
+def _clean_vector_body_text(text: str) -> str:
+    """移除生成型说明段落，只保留可用于检索和弹窗展示的正文。"""
+    if not text:
+        return ""
+    lines = text.splitlines()
+    kept: list[str] = []
+    skip_until_heading_level: Optional[int] = None
+    for line in lines:
+        heading_match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+        if heading_match:
+            heading_level = len(heading_match.group(1))
+            heading = heading_match.group(2).strip().strip(":：")
+            if skip_until_heading_level is not None and heading_level <= skip_until_heading_level:
+                skip_until_heading_level = None
+            if heading_level >= 2 and heading in GENERATED_VECTOR_SECTION_HEADINGS:
+                skip_until_heading_level = heading_level
+                continue
+        if skip_until_heading_level is not None:
+            continue
+        if _is_generated_body_line(line):
+            continue
+        kept.append(line)
+    return _normalize_whitespace("\n".join(kept))
+
+
+def _is_generated_body_line(line: str) -> bool:
+    stripped = line.strip()
+    return any(stripped.startswith(f"{prefix}:") or stripped.startswith(f"{prefix}：") for prefix in GENERATED_VECTOR_LINE_PREFIXES)
+
+
+def _parse_markdown_frontmatter(text: str) -> dict[str, str]:
+    """读取 Markdown 顶部的简易 frontmatter。
+
+    知识库整理脚本会在文档头部写入 document_id、kb_category、region 等字段，
+    这里解析出来后放入 Milvus metadata。
+    """
+    return _split_markdown_frontmatter(text)[0]
 
 
 def _infer_document_type(metadata: dict, *, filename: str, local_file: str) -> str:
@@ -715,14 +790,6 @@ def faq_to_vector_text(faq) -> str:
         lines.extend(["", "## 关键词", "、".join(str(item) for item in keywords if item)])
     if source_ids:
         lines.extend(["", "## 关联来源 ID", "、".join(str(item) for item in source_ids if item)])
-    lines.extend(
-        [
-            "",
-            "## 使用规则",
-            "- FAQ 用于提升常见问法召回率。",
-            "- 回答时应优先核对关联来源和官方资料；FAQ 与官方来源冲突时，以最新官方来源和人工复核结果为准。",
-        ]
-    )
     return _normalize_whitespace("\n".join(lines))
 
 

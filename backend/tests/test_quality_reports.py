@@ -1,5 +1,6 @@
 from app.schemas.chat import SourceInfo
 from app.services.milvus_vector_service import VectorIndexResult
+from app.services.milvus_vector_service import MilvusVectorService
 from app.services.quality_reports import build_answer_quality_report, build_vector_ingest_quality_report
 from scripts.build_milvus_vector_db import BuildItem, BuildSummary, append_quality_report
 
@@ -19,6 +20,28 @@ def test_answer_quality_report_scores_traceable_structured_answer():
     assert data["status"] == "pass"
     assert data["metrics"]["source_count"] == 1
     assert data["metrics"]["faq_source_count"] == 1
+
+
+def test_milvus_source_info_uses_parent_document_title_and_chunk_metadata():
+    class DocumentStub:
+        page_content = "新员工入职后，应依法及时办理参保。"
+        metadata = {
+            "filename": "FAQ004_新员工入职后多久要办理社保？.md",
+            "document_type": "faq",
+            "document_id": "FAQ004",
+            "local_file": "documents/faqs/FAQ004_新员工入职后多久要办理社保？.md",
+            "chunk_index": 3,
+            "url": "https://example.com/source",
+        }
+
+    service = object.__new__(MilvusVectorService)
+    source = service._source_info_from_document(DocumentStub())
+
+    assert source.title == "[FAQ] FAQ004_新员工入职后多久要办理社保？.md"
+    assert "#chunk" not in source.title
+    assert source.chunk_index == 3
+    assert source.document_id == "FAQ004"
+    assert source.local_file == "documents/faqs/FAQ004_新员工入职后多久要办理社保？.md"
 
 
 def test_vector_ingest_quality_report_warns_missing_source_link():
@@ -93,6 +116,28 @@ def test_batch_builder_summarizes_vector_ingest_quality_report():
     assert summary.quality_overview["pass_count"] == 1
     assert summary.quality_reports[0]["document_id"] == "FAQ001"
     assert summary.quality_reports[0]["kb_category"] == "standard_faq"
+
+
+def test_vector_ingest_quality_report_allows_single_chunk_faq():
+    result = VectorIndexResult(
+        document_id="FAQ099",
+        title="长 FAQ 示例",
+        filename="FAQ099_长 FAQ 示例.md",
+        local_file="documents/faqs/FAQ099_长 FAQ 示例.md",
+        characters=3600,
+        chunks=1,
+        collection="slc_docs_demo_v1",
+    )
+
+    report = build_vector_ingest_quality_report(
+        result=result,
+        title=result.title,
+        source_id=12,
+        tenant_code="demo-sx",
+    ).model_dump()
+
+    assert report["metrics"]["chunks"] == 1
+    assert not any("vector_chunk_size" in item for item in report["recommendations"])
 
 
 def test_answer_quality_report_handles_precheck_provider_as_safe_routing():

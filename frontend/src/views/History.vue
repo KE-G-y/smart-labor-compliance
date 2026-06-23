@@ -137,16 +137,16 @@
               <section v-if="sourceList.length">
                 <h3>{{ t('sourcesInfo') }}</h3>
                 <div class="history-sources">
-                  <template v-for="(source, index) in sourceList" :key="`${source.title || ''}-${source.url || ''}-${index}`">
-                    <a v-if="validSourceUrl(source.url)" :href="source.url" target="_blank" rel="noreferrer">
-                      <strong>{{ source.title || source.url || '-' }}</strong>
-                      <span>{{ source.snippet || source.url || '' }}</span>
-                    </a>
-                    <div v-else class="history-source-card">
-                      <strong>{{ source.title || '-' }}</strong>
-                      <span>{{ source.snippet || source.url || '' }}</span>
-                    </div>
-                  </template>
+                  <button
+                    v-for="source in sourceList"
+                    :key="sourceKey(source)"
+                    class="history-source-card"
+                    type="button"
+                    @click="openSourceDetail(source)"
+                  >
+                    <strong>{{ source.title || source.url || '-' }}</strong>
+                    <span>{{ sourceListSummary(source) }}</span>
+                  </button>
                 </div>
               </section>
               <section v-if="taskList.length">
@@ -169,6 +169,7 @@
         </div>
       </div>
     </Teleport>
+    <SourceDetailModal :open="sourceDetailOpen" :source="selectedSource" @close="closeSourceDetail" />
     <AppDialog
       :open="confirmDialog.open"
       mode="confirm"
@@ -204,9 +205,11 @@ import { useI18n } from '@/i18n'
 import { useDialog } from '@/composables/useDialog'
 import { renderMarkdown } from '@/utils/markdown'
 import { displayedRiskLevel } from '@/utils/risk'
+import { groupSources } from '@/utils/sources'
 import AppDialog from '@/components/AppDialog.vue'
 import AppPagination from '@/components/AppPagination.vue'
 import AppSelect from '@/components/AppSelect.vue'
+import SourceDetailModal from '@/components/SourceDetailModal.vue'
 import AppTopbar from '@/components/AppTopbar.vue'
 
 const { t, formatDateTime, riskLabel, statusLabel } = useI18n()
@@ -223,13 +226,15 @@ const provider = ref('')
 const allItems = ref(false)
 const selectedIds = ref([])
 const selectedItem = ref(null)
+const selectedSource = ref(null)
 const detailModalOpen = ref(false)
+const sourceDetailOpen = ref(false)
 
 const userId = computed(() => localStorage.getItem('user_id') || 'demo-user')
 const hasFilters = computed(() => Boolean(keyword.value.trim() || status.value || provider.value))
 const allSelected = computed(() => items.value.length > 0 && items.value.every(item => selectedIds.value.includes(item.id)))
 const selectedCountText = computed(() => t('selectedCount').replace('{count}', selectedIds.value.length))
-const sourceList = computed(() => Array.isArray(selectedItem.value?.sources) ? selectedItem.value.sources : [])
+const sourceList = computed(() => groupSources(selectedItem.value?.sources || []))
 const taskList = computed(() => Array.isArray(selectedItem.value?.related_tasks) ? selectedItem.value.related_tasks : [])
 const visibleRangeText = computed(() => {
   if (!total.value) return t('paginationTotal').replace('{total}', 0)
@@ -353,10 +358,23 @@ const openDetail = (item) => {
 const closeDetail = () => {
   detailModalOpen.value = false
   selectedItem.value = null
+  closeSourceDetail()
 }
 
 const formatTime = (time) => formatDateTime(time)
-const validSourceUrl = (url) => /^https?:\/\//i.test(url || '')
+const sourceKey = (source) => [source.document_id || source.local_file || source.title, source.url || '', source.source_type || ''].join('|')
+const sourceListSummary = (source) => {
+  const count = Array.isArray(source.chunks) ? source.chunks.length : 0
+  return count > 1 ? t('sourceChunkCount').replace('{count}', count) : t('sourceListHint')
+}
+const openSourceDetail = (source) => {
+  selectedSource.value = source
+  sourceDetailOpen.value = true
+}
+const closeSourceDetail = () => {
+  sourceDetailOpen.value = false
+  selectedSource.value = null
+}
 
 const loadTenant = async () => {
   try {
@@ -555,18 +573,27 @@ onMounted(() => {
   gap: 8px;
 }
 
-.history-sources a,
 .history-source-card,
 .history-task-card {
+  width: 100%;
   display: grid;
   gap: 4px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   text-decoration: none;
+  background: var(--surface-soft);
+  color: var(--text);
+  text-align: left;
+  font: inherit;
 }
 
-.history-sources a:hover {
+.history-source-card {
+  cursor: pointer;
+  white-space: normal;
+}
+
+.history-source-card:hover {
   border-color: var(--primary);
 }
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Optional
 
@@ -57,12 +58,20 @@ class LangChainComplianceProvider:
         base_url: str = "",
         temperature: float = 0.2,
         timeout_seconds: int = 45,
+        langsmith_tracing_enabled: bool = False,
+        langsmith_endpoint: str = "",
+        langsmith_api_key: str = "",
+        langsmith_project: str = "",
     ):
         self.api_key = (api_key or "").strip()
         self.model = (model or "").strip()
         self.base_url = (base_url or "").strip()
         self.temperature = temperature
         self.timeout_seconds = timeout_seconds
+        self.langsmith_tracing_enabled = bool(langsmith_tracing_enabled)
+        self.langsmith_endpoint = (langsmith_endpoint or "").strip()
+        self.langsmith_api_key = (langsmith_api_key or "").strip()
+        self.langsmith_project = (langsmith_project or "").strip() or "smart-labor-compliance"
 
     @property
     def configured(self) -> bool:
@@ -138,7 +147,20 @@ class LangChainComplianceProvider:
             )
             # LCEL 管道：Prompt 模板 -> 聊天模型 -> 字符串输出。
             chain = prompt | llm | StrOutputParser()
-            answer = chain.invoke(prompt_context.__dict__)
+            run_config = {
+                "run_name": "compliance_answer",
+                "tags": ["smart-labor-compliance", prompt_context.tenant_code, prompt_context.province],
+                "metadata": {
+                    "tenant_code": prompt_context.tenant_code,
+                    "tenant_name": prompt_context.tenant_name,
+                    "province": prompt_context.province,
+                    "city": prompt_context.city,
+                    "user_role": prompt_context.user_role,
+                    "model": self.model,
+                },
+            }
+            with self._langsmith_context(prompt_context):
+                answer = chain.invoke(prompt_context.__dict__, config=run_config)
             cleaned = sanitize_text(answer) or ""
             if not cleaned:
                 raise LangChainUnavailable("LangChain 未返回有效回答")
@@ -149,5 +171,44 @@ class LangChainComplianceProvider:
             message = sanitize_text(str(exc)) or exc.__class__.__name__
             if self.api_key:
                 message = message.replace(self.api_key, "[API Key 已隐藏]")
+            if self.langsmith_api_key:
+                message = message.replace(self.langsmith_api_key, "[LangSmith API Key 已隐藏]")
             logger.warning("LangChain provider failed. model=%s base_url=%s error=%s", self.model, self.base_url, message)
             raise LangChainUnavailable(f"LangChain 调用失败: {message}") from exc
+
+    def _langsmith_context(self, prompt_context: LangChainPromptContext):
+        if not self.langsmith_tracing_enabled:
+            return nullcontext()
+        if not self.langsmith_api_key:
+            logger.warning("LangSmith tracing is enabled but API key is not configured; tracing skipped.")
+            return nullcontext()
+        try:
+            from langsmith import Client, tracing_context
+        except ImportError:
+            logger.warning("LangSmith tracing is enabled but langsmith package is not installed; tracing skipped.")
+            return nullcontext()
+
+        try:
+            client = Client(
+                api_url=self.langsmith_endpoint or None,
+                api_key=self.langsmith_api_key,
+                timeout_ms=max(self.timeout_seconds * 1000, 5000),
+            )
+            return tracing_context(
+                enabled=True,
+                project_name=self.langsmith_project,
+                client=client,
+                tags=["smart-labor-compliance", prompt_context.tenant_code],
+                metadata={
+                    "tenant_code": prompt_context.tenant_code,
+                    "tenant_name": prompt_context.tenant_name,
+                    "province": prompt_context.province,
+                    "city": prompt_context.city,
+                    "model": self.model,
+                },
+            )
+        except Exception as exc:
+            message = sanitize_text(str(exc)) or exc.__class__.__name__
+            message = message.replace(self.langsmith_api_key, "[LangSmith API Key 已隐藏]")
+            logger.warning("LangSmith tracing setup failed; tracing skipped. error=%s", message)
+            return nullcontext()

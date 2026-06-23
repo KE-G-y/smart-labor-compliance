@@ -2,9 +2,10 @@ from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
+import requests
 
 from app.schemas.chat import ChatResponse
-from app.services.dify_service import ChatAttachment, ComplianceAnswerService
+from app.services.dify_service import ChatAttachment, ComplianceAnswerService, dify_attachment_capability
 from app.services.runtime_config import DEFAULT_QUERY_STRATEGY, normalize_config_update
 
 
@@ -145,3 +146,60 @@ def test_langchain_only_attachment_does_not_call_dify(monkeypatch):
     assert response.fallback_reason == "query_strategy=langchain_only"
     assert "不允许调用 Dify 文件解析链路" in response.answer
     assert response.evaluation["metrics"]["provider"] == "provider_disabled"
+
+
+def test_dify_attachment_capability_hides_when_strategy_disables_dify(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.dify_service.get_runtime_config",
+        lambda db: SimpleNamespace(
+            query_strategy="langchain_only",
+            dify_base_url="http://127.0.0.1:65500/v1",
+            dify_api_key="dify-key",
+        ),
+    )
+
+    result = dify_attachment_capability(SimpleNamespace(), SimpleNamespace(dify_api_key=""))
+
+    assert result["available"] is False
+    assert result["reason"] == "strategy_disabled"
+
+
+def test_dify_attachment_capability_requires_key_and_online_service(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.dify_service.get_runtime_config",
+        lambda db: SimpleNamespace(
+            query_strategy="langchain_first",
+            dify_base_url="http://127.0.0.1:65500/v1",
+            dify_api_key="",
+        ),
+    )
+
+    missing_key = dify_attachment_capability(SimpleNamespace(), SimpleNamespace(dify_api_key=""))
+    assert missing_key["available"] is False
+    assert missing_key["reason"] == "not_configured"
+
+    monkeypatch.setattr(
+        "app.services.dify_service.get_runtime_config",
+        lambda db: SimpleNamespace(
+            query_strategy="langchain_first",
+            dify_base_url="http://127.0.0.1:65500/v1",
+            dify_api_key="dify-key",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.dify_service.requests.get",
+        lambda *args, **kwargs: (_ for _ in ()).throw(requests.RequestException("offline")),
+    )
+
+    offline = dify_attachment_capability(SimpleNamespace(), SimpleNamespace(dify_api_key=""))
+    assert offline["available"] is False
+    assert offline["reason"] == "offline"
+
+    monkeypatch.setattr(
+        "app.services.dify_service.requests.get",
+        lambda *args, **kwargs: SimpleNamespace(status_code=404),
+    )
+
+    online = dify_attachment_capability(SimpleNamespace(), SimpleNamespace(dify_api_key=""))
+    assert online["available"] is True
+    assert online["reason"] == "available"

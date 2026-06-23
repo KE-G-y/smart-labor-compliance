@@ -47,6 +47,10 @@ def test_system_config_update_preserves_secret_semantics_and_skips_network_valid
                 "langchain_embedding_model": "bge-m3",
                 "langchain_temperature": 0.1,
                 "langchain_timeout_seconds": 9,
+                "langsmith_tracing_enabled": True,
+                "langsmith_endpoint": "https://api.smith.langchain.com",
+                "langsmith_api_key": "global-langsmith-secret",
+                "langsmith_project": "slc-test",
                 "milvus_uri": "http://127.0.0.1:19530",
                 "milvus_token": "milvus-secret",
                 "milvus_collection": "slc_test_docs",
@@ -72,6 +76,10 @@ def test_system_config_update_preserves_secret_semantics_and_skips_network_valid
     assert config["data"]["langchain_embedding_model"] == "bge-m3"
     assert config["data"]["langchain_temperature"] == 0.1
     assert config["data"]["langchain_timeout_seconds"] == 9
+    assert config["data"]["langsmith_tracing_enabled"] is True
+    assert config["data"]["langsmith_endpoint"] == "https://api.smith.langchain.com"
+    assert config["data"]["langsmith_api_key_configured"] is True
+    assert config["data"]["langsmith_project"] == "slc-test"
     assert config["data"]["milvus_uri"] == "http://127.0.0.1:19530"
     assert config["data"]["milvus_token_configured"] is True
     assert config["data"]["milvus_collection"] == "slc_test_docs"
@@ -93,19 +101,21 @@ def test_system_config_update_preserves_secret_semantics_and_skips_network_valid
     assert config["data"]["dify_base_url"] == "http://127.0.0.1:65502/v1"
     assert config["data"]["dify_api_key_configured"] is True
     assert config["data"]["langchain_api_key_configured"] is True
+    assert config["data"]["langsmith_api_key_configured"] is True
     assert config["data"]["langchain_temperature"] == 1.2
 
     assert_ok(
         client.put(
             f"{api_base_url}/api/admin/system-config",
             headers=super_headers,
-            json={"dify_api_key": None, "langchain_api_key": None, "milvus_token": None},
+            json={"dify_api_key": None, "langchain_api_key": None, "langsmith_api_key": None, "milvus_token": None},
             timeout=10,
         )
     )
     config = assert_ok(client.get(f"{api_base_url}/api/admin/system-config", headers=super_headers, timeout=10))
     assert config["data"]["dify_api_key_configured"] is False
     assert config["data"]["langchain_api_key_configured"] is False
+    assert config["data"]["langsmith_api_key_configured"] is False
     assert config["data"]["milvus_token_configured"] is False
 
     invalid_url = client.put(

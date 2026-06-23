@@ -139,6 +139,10 @@ class SystemConfigUpdate(BaseModel):
     langchain_embedding_model: Optional[str] = None
     langchain_temperature: Optional[float] = None
     langchain_timeout_seconds: Optional[int] = None
+    langsmith_tracing_enabled: Optional[bool] = None
+    langsmith_endpoint: Optional[str] = None
+    langsmith_api_key: Optional[str] = None
+    langsmith_project: Optional[str] = None
     milvus_uri: Optional[str] = None
     milvus_token: Optional[str] = None
     milvus_collection: Optional[str] = None
@@ -171,6 +175,10 @@ class SystemConfigResponse(BaseModel):
     langchain_embedding_model: str = "bge-m3"
     langchain_temperature: float = 0.2
     langchain_timeout_seconds: int = 45
+    langsmith_tracing_enabled: bool = False
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+    langsmith_api_key_configured: bool = False
+    langsmith_project: str = "smart-labor-compliance"
     milvus_uri: Optional[str] = None
     milvus_token_configured: bool = False
     milvus_collection: str = "slc_compliance_docs"

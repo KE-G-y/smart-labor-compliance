@@ -89,6 +89,59 @@
 
       <section class="panel">
         <div class="section-title">
+          <h2>{{ t('langsmithConfig') }}</h2>
+        </div>
+        <div v-if="loading" class="loading-mask">
+          <span>{{ t('loading') }}</span>
+        </div>
+        <form v-else class="config-form" @submit.prevent="saveConfig">
+          <div class="toggle-row">
+            <label>
+              <input v-model="form.langsmith_tracing_enabled" type="checkbox" />
+              <span>{{ t('langsmithTracingEnabled') }}</span>
+            </label>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>{{ t('langsmithEndpoint') }}</label>
+              <input v-model="form.langsmith_endpoint" class="input" :placeholder="t('langsmithEndpointPlaceholder')" />
+            </div>
+            <div class="form-group">
+              <label>{{ t('langsmithProject') }}</label>
+              <input v-model="form.langsmith_project" class="input" :placeholder="t('langsmithProjectPlaceholder')" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>{{ t('langsmithApiKey') }}</label>
+            <div class="secret-row">
+              <input
+                v-model="form.langsmith_api_key"
+                class="input"
+                type="password"
+                :disabled="form.langsmith_api_key_clear"
+                :placeholder="form.langsmith_api_key_configured ? t('langsmithApiKeyConfiguredPlaceholder') : t('langsmithApiKeyPlaceholder')"
+                @input="form.langsmith_api_key_clear = false"
+              />
+              <button v-if="form.langsmith_api_key_configured" class="btn" type="button" @click="toggleSecretClear('langsmith')">
+                {{ form.langsmith_api_key_clear ? t('undoClear') : t('clearApiKey') }}
+              </button>
+            </div>
+            <div v-if="form.langsmith_api_key_configured || form.langsmith_api_key_clear" class="config-hint">
+              <span :class="['tag', form.langsmith_api_key_clear ? 'warning' : 'success']">
+                {{ form.langsmith_api_key_clear ? t('willClear') : t('configured') }}
+              </span>
+              <span>{{ form.langsmith_api_key_clear ? t('apiKeyClearHint') : t('langsmithApiKeyConfiguredHint') }}</span>
+            </div>
+          </div>
+          <div class="config-hint">
+            <span class="tag">{{ t('langsmithHintTag') }}</span>
+            <span>{{ t('langsmithHint') }}</span>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">
           <h2>{{ t('milvusConfig') }}</h2>
         </div>
         <div v-if="loading" class="loading-mask">
@@ -351,6 +404,12 @@ const form = ref({
   langchain_embedding_model: 'bge-m3',
   langchain_temperature: 0.2,
   langchain_timeout_seconds: 45,
+  langsmith_tracing_enabled: false,
+  langsmith_endpoint: 'https://api.smith.langchain.com',
+  langsmith_api_key: '',
+  langsmith_api_key_configured: false,
+  langsmith_api_key_clear: false,
+  langsmith_project: 'smart-labor-compliance',
   milvus_uri: '',
   milvus_token: '',
   milvus_token_configured: false,
@@ -453,6 +512,12 @@ const fetchConfig = async () => {
       form.value.langchain_embedding_model = res.data.langchain_embedding_model || 'bge-m3'
       form.value.langchain_temperature = res.data.langchain_temperature ?? 0.2
       form.value.langchain_timeout_seconds = res.data.langchain_timeout_seconds || 45
+      form.value.langsmith_tracing_enabled = res.data.langsmith_tracing_enabled ?? false
+      form.value.langsmith_endpoint = res.data.langsmith_endpoint || 'https://api.smith.langchain.com'
+      form.value.langsmith_api_key = ''
+      form.value.langsmith_api_key_configured = res.data.langsmith_api_key_configured || false
+      form.value.langsmith_api_key_clear = false
+      form.value.langsmith_project = res.data.langsmith_project || 'smart-labor-compliance'
       form.value.milvus_uri = res.data.milvus_uri || ''
       form.value.milvus_token = ''
       form.value.milvus_token_configured = res.data.milvus_token_configured || false
@@ -512,6 +577,14 @@ const saveConfig = async () => {
     if (form.value.langchain_embedding_model !== undefined) payload.langchain_embedding_model = form.value.langchain_embedding_model
     if (form.value.langchain_temperature !== undefined && form.value.langchain_temperature !== '') payload.langchain_temperature = form.value.langchain_temperature
     if (form.value.langchain_timeout_seconds !== undefined && form.value.langchain_timeout_seconds !== '') payload.langchain_timeout_seconds = form.value.langchain_timeout_seconds
+    payload.langsmith_tracing_enabled = Boolean(form.value.langsmith_tracing_enabled)
+    if (form.value.langsmith_endpoint !== undefined) payload.langsmith_endpoint = form.value.langsmith_endpoint
+    if (form.value.langsmith_api_key_clear) {
+      payload.langsmith_api_key = null
+    } else if (cleanSecret(form.value.langsmith_api_key)) {
+      payload.langsmith_api_key = cleanSecret(form.value.langsmith_api_key)
+    }
+    if (form.value.langsmith_project !== undefined) payload.langsmith_project = form.value.langsmith_project
     if (form.value.milvus_uri !== undefined) payload.milvus_uri = form.value.milvus_uri
     if (form.value.milvus_token_clear) {
       payload.milvus_token = null

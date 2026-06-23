@@ -37,7 +37,11 @@ class SourceInfo(BaseModel):
     title: str
     url: Optional[str] = None
     snippet: Optional[str] = None
+    content: Optional[str] = None
     source_type: Optional[str] = None
+    document_id: Optional[str] = None
+    local_file: Optional[str] = None
+    chunk_index: Optional[int] = None
 
 
 class TaskInfo(BaseModel):

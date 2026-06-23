@@ -22,6 +22,10 @@ CONFIG_KEYS = {
     "langchain_embedding_model",
     "langchain_temperature",
     "langchain_timeout_seconds",
+    "langsmith_tracing_enabled",
+    "langsmith_endpoint",
+    "langsmith_api_key",
+    "langsmith_project",
     "milvus_uri",
     "milvus_token",
     "milvus_collection",
@@ -41,8 +45,8 @@ CONFIG_KEYS = {
     "ragflow_timeout_seconds",
 }
 
-URL_CONFIG_KEYS = {"dify_base_url", "langchain_base_url", "ragflow_base_url", "ragflow_web_url"}
-SECRET_CONFIG_KEYS = {"dify_api_key", "langchain_api_key", "milvus_token", "ragflow_api_key"}
+URL_CONFIG_KEYS = {"dify_base_url", "langchain_base_url", "langsmith_endpoint", "ragflow_base_url", "ragflow_web_url"}
+SECRET_CONFIG_KEYS = {"dify_api_key", "langchain_api_key", "langsmith_api_key", "milvus_token", "ragflow_api_key"}
 TIMEOUT_CONFIG_LIMITS = {
     "dify_timeout_seconds": (5, 300),
     "langchain_timeout_seconds": (5, 300),
@@ -56,6 +60,7 @@ INTEGER_CONFIG_LIMITS = {
 BOOLEAN_CONFIG_KEYS = {
     "local_embedding_enabled",
     "local_reranker_enabled",
+    "langsmith_tracing_enabled",
 }
 TEMPERATURE_CONFIG_LIMITS = {
     "langchain_temperature": (0.0, 2.0),
@@ -88,6 +93,10 @@ class RuntimeConfig:
     langchain_embedding_model: str
     langchain_temperature: float
     langchain_timeout_seconds: int
+    langsmith_tracing_enabled: bool
+    langsmith_endpoint: str
+    langsmith_api_key: str
+    langsmith_project: str
     milvus_uri: str
     milvus_token: str
     milvus_collection: str
@@ -334,6 +343,14 @@ def get_runtime_config(db: Session) -> RuntimeConfig:
             "langchain_timeout_seconds",
             settings.langchain_timeout_seconds,
         ),
+        langsmith_tracing_enabled=_effective_boolean(
+            raw,
+            "langsmith_tracing_enabled",
+            settings.langsmith_tracing_enabled,
+        ),
+        langsmith_endpoint=_effective_text(raw, "langsmith_endpoint", settings.langsmith_endpoint),
+        langsmith_api_key=_effective_text(raw, "langsmith_api_key", settings.langsmith_api_key),
+        langsmith_project=_effective_text(raw, "langsmith_project", settings.langsmith_project),
         milvus_uri=_effective_text(raw, "milvus_uri", settings.milvus_uri),
         milvus_token=_effective_text(raw, "milvus_token", settings.milvus_token),
         milvus_collection=_effective_text(raw, "milvus_collection", settings.milvus_collection),

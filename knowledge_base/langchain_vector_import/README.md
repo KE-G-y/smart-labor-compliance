@@ -21,10 +21,10 @@
 
 ## 推荐入库方式
 
-1. 启动项目并配置 `MILVUS_URI`、`MILVUS_COLLECTION` 和 Embedding 能力。默认优先使用 `backend/models/bge-m3` 本地模型；如果本地模型依赖不可用，则需要配置 `LANGCHAIN_API_KEY` 和 `LANGCHAIN_EMBEDDING_MODEL`。
+1. 启动项目并配置 `LANGCHAIN_API_KEY`、`LANGCHAIN_EMBEDDING_MODEL`、`MILVUS_URI`、`MILVUS_COLLECTION`。
 2. 登录管理端，进入「来源管理」的「文档解析入库」。
-3. 按 `upload_plan.csv` 上传 `prepared_file` 对应的 Markdown 文件，或使用 `backend/scripts/build_milvus_vector_db.py` 按 `manifest.csv` 批量构建版本化 collection。
-4. 官方来源资料优先入库；企业制度和 FAQ 可按业务需要补充入库。FAQ 写入时使用 `document_type=faq`，普通资料使用 `document_type=document`。
+3. 按 `upload_plan.csv` 上传 `prepared_file` 对应的 Markdown 文件。
+4. 官方来源资料优先入库；企业制度和 FAQ 可按业务需要补充入库。
 
 ## 推荐切分参数
 

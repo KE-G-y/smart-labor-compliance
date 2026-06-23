@@ -290,6 +290,15 @@ def build_vector_ingest_quality_report(
     characters = int(result.characters or 0)
     chunks = int(result.chunks or 0)
     title_text = (title or result.title or "").strip()
+    result_document_id = str(result.document_id or "").upper()
+    result_filename = str(result.filename or "").upper()
+    result_local_file = str(result.local_file or "").replace("\\", "/").lower()
+    is_faq_result = (
+        result_document_id.startswith("FAQ")
+        or result_filename.startswith("FAQ")
+        or ".faq." in result_filename.lower()
+        or "/faqs/" in result_local_file
+    )
 
     if characters < 500:
         text_score = 50
@@ -303,7 +312,7 @@ def build_vector_ingest_quality_report(
     if chunks <= 0:
         chunk_score = 20
         recommendations.append("未生成 chunk，请检查文档解析和切分配置。")
-    elif chunks == 1 and characters > 2500:
+    elif chunks == 1 and characters > 2500 and not is_faq_result:
         chunk_score = 68
         recommendations.append("文档较长但只生成 1 个 chunk，建议检查 `vector_chunk_size` 配置。")
     else:

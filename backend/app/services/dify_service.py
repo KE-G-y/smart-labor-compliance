@@ -382,6 +382,10 @@ class ComplianceAnswerService:
             base_url=self.runtime_config.langchain_base_url,
             temperature=self.runtime_config.langchain_temperature,
             timeout_seconds=self.runtime_config.langchain_timeout_seconds,
+            langsmith_tracing_enabled=self.runtime_config.langsmith_tracing_enabled,
+            langsmith_endpoint=self.runtime_config.langsmith_endpoint,
+            langsmith_api_key=self.runtime_config.langsmith_api_key,
+            langsmith_project=self.runtime_config.langsmith_project,
         )
         if not provider.configured:
             return None
@@ -1137,6 +1141,12 @@ def check_external_services() -> dict:
             "url": runtime_config.dify_base_url,
             "configured": bool(runtime_config.dify_api_key),
         },
+        "langsmith": {
+            "name": "LangSmith",
+            "url": runtime_config.langsmith_endpoint,
+            "configured": bool(runtime_config.langsmith_tracing_enabled and runtime_config.langsmith_api_key),
+            "project": runtime_config.langsmith_project,
+        },
         "ragflow": {
             "name": "RAGFlow",
             "url": runtime_config.ragflow_web_url,
@@ -1167,6 +1177,10 @@ def check_external_services() -> dict:
             item["online"] = None
             item["status_code"] = None
             continue
+        if key == "langsmith" and not item["configured"]:
+            item["online"] = None
+            item["status_code"] = None
+            continue
         probe_url = item["url"]
         try:
             response = requests.get(probe_url, timeout=3)
@@ -1177,3 +1191,36 @@ def check_external_services() -> dict:
             item["status_code"] = None
     services["local_models"] = local_model_status(runtime_config)
     return services
+
+
+def dify_attachment_capability(db: Session, tenant: Tenant) -> dict:
+    """返回用户端是否应显示附件解析入口。
+
+    附件内容只能交给 Dify 处理；因此只有管理员策略允许 Dify、已配置
+    Dify Key 且服务地址可连通时，前端才展示上传控件。
+    """
+    runtime_config = get_runtime_config(db)
+    strategy = runtime_config.query_strategy if runtime_config.query_strategy in QUERY_STRATEGIES else DEFAULT_QUERY_STRATEGY
+    strategy_allows_dify = "dify" in QUERY_STRATEGY_ORDER[strategy]
+    tenant_dify_key_value = getattr(tenant, "dify_api_key", None)
+    tenant_dify_key = str(tenant_dify_key_value).strip() if tenant_dify_key_value is not None else ""
+    configured = bool(runtime_config.dify_base_url and (tenant_dify_key or runtime_config.dify_api_key))
+    result = {
+        "available": False,
+        "provider": "dify",
+        "reason": "unavailable",
+    }
+    if not strategy_allows_dify:
+        result["reason"] = "strategy_disabled"
+        return result
+    if not configured:
+        result["reason"] = "not_configured"
+        return result
+    try:
+        response = requests.get(runtime_config.dify_base_url, timeout=3)
+        online = response.status_code < 500
+    except requests.RequestException:
+        online = False
+    result["available"] = online
+    result["reason"] = "available" if online else "offline"
+    return result

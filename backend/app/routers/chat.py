@@ -19,7 +19,7 @@ from app.models import ChatLog, Tenant
 from app.response import ok
 from app.schemas.chat import ChatRequest, ChatResponse, ChatStopRequest, HistoryResponse
 from app.security import hash_ip, sanitize_text
-from app.services.dify_service import ChatAttachment, ComplianceAnswerService
+from app.services.dify_service import ChatAttachment, ComplianceAnswerService, dify_attachment_capability
 from app.services.quality_reports import build_answer_quality_report
 
 router = APIRouter(prefix="/api", tags=["问答"])
@@ -237,6 +237,19 @@ async def chat(
         response_time=_elapsed_ms(request_start),
     )
     return ok(response.model_dump(), "回答生成成功")
+
+
+@router.get("/chat-capabilities", response_model=dict)
+def chat_capabilities(
+    db: Session = Depends(get_db),
+    header_tenant: Tenant = Depends(get_public_tenant),
+):
+    return ok(
+        {
+            "attachments": dify_attachment_capability(db, header_tenant),
+        },
+        "ok",
+    )
 
 
 @router.post("/chat-with-file", response_model=dict)

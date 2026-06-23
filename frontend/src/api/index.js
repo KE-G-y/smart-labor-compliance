@@ -83,6 +83,7 @@ export const chatWithFile = (data, file, config = {}) => {
   return api.post('/chat-with-file', formData, config)
 }
 export const stopChatGeneration = (data) => api.post('/chat/stop', data)
+export const getChatCapabilities = () => api.get('/chat-capabilities')
 export const getHistory = (params) => api.get('/history', { params })
 export const exportHistory = (params = {}) => exportCsv('/history/export', params, 'history.csv')
 export const clearHistory = (userId) => api.delete('/history', { params: { user_id: userId } })

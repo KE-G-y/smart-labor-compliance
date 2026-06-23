@@ -71,21 +71,16 @@
             <section v-if="sourceList.length">
               <h3>{{ t('sourcesInfo') }}</h3>
               <div class="log-sources">
-                <template v-for="source in sourceList" :key="source.title + source.url">
-                  <a
-                    v-if="validSourceUrl(source.url)"
-                    :href="source.url"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <strong>{{ source.title || source.url || '-' }}</strong>
-                    <span>{{ source.snippet || source.url || '' }}</span>
-                  </a>
-                  <div v-else class="log-source-card">
-                    <strong>{{ source.title || '-' }}</strong>
-                    <span>{{ source.snippet || source.url || '' }}</span>
-                  </div>
-                </template>
+                <button
+                  v-for="source in sourceList"
+                  :key="sourceKey(source)"
+                  class="log-source-card"
+                  type="button"
+                  @click="openSourceDetail(source)"
+                >
+                  <strong>{{ source.title || '-' }}</strong>
+                  <span>{{ sourceListSummary(source) }}</span>
+                </button>
               </div>
             </section>
           </div>
@@ -96,6 +91,7 @@
         </div>
       </div>
     </Teleport>
+    <SourceDetailModal :open="sourceDetailOpen" :source="selectedSource" @close="closeSourceDetail" />
   </AdminLayout>
 </template>
 
@@ -105,10 +101,12 @@ import { getLogDetail, getLogs } from '@/api'
 import { useI18n } from '@/i18n'
 import { renderMarkdown } from '@/utils/markdown'
 import { displayedRiskLevel } from '@/utils/risk'
+import { groupSources } from '@/utils/sources'
 import AppPagination from '@/components/AppPagination.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import AppTable from '@/components/AppTable.vue'
 import EllipsisText from '@/components/EllipsisText.vue'
+import SourceDetailModal from '@/components/SourceDetailModal.vue'
 import AdminLayout from './AdminLayout.vue'
 
 const { t, formatDateTime, riskLabel } = useI18n()
@@ -119,7 +117,9 @@ const pageSize = ref(20)
 const keyword = ref('')
 const status = ref('')
 const selectedLog = ref(null)
+const selectedSource = ref(null)
 const detailModalOpen = ref(false)
+const sourceDetailOpen = ref(false)
 const loading = ref(false)
 const sequenceStart = computed(() => (page.value - 1) * pageSize.value + 1)
 const logColumns = computed(() => [
@@ -133,7 +133,7 @@ const logColumns = computed(() => [
   { key: 'created_at', label: t('time'), width: '156px' },
   { key: 'action', label: t('action'), width: '112px' }
 ])
-const sourceList = computed(() => Array.isArray(selectedLog.value?.sources) ? selectedLog.value.sources : [])
+const sourceList = computed(() => groupSources(selectedLog.value?.sources || []))
 const statusOptions = computed(() => [
   { value: '', label: t('allStatus') },
   { value: 'success', label: t('statusSuccess') },
@@ -156,6 +156,11 @@ const queryLogs = () => {
 }
 const riskClass = (risk) => risk === 'high' ? 'danger' : risk === 'medium' ? 'warning' : 'success'
 const formatTime = (time) => formatDateTime(time)
+const sourceKey = (source) => [source.document_id || source.local_file || source.title, source.url || '', source.source_type || ''].join('|')
+const sourceListSummary = (source) => {
+  const count = Array.isArray(source.chunks) ? source.chunks.length : 0
+  return count > 1 ? t('sourceChunkCount').replace('{count}', count) : t('sourceListHint')
+}
 const openLogDetail = async (id) => {
   const res = await getLogDetail(id)
   selectedLog.value = res.data
@@ -164,8 +169,16 @@ const openLogDetail = async (id) => {
 const closeLogDetail = () => {
   detailModalOpen.value = false
   selectedLog.value = null
+  closeSourceDetail()
 }
-const validSourceUrl = (url) => /^https?:\/\//i.test(url || '')
+const openSourceDetail = (source) => {
+  selectedSource.value = source
+  sourceDetailOpen.value = true
+}
+const closeSourceDetail = () => {
+  sourceDetailOpen.value = false
+  selectedSource.value = null
+}
 
 onMounted(fetchLogs)
 </script>
@@ -225,17 +238,23 @@ onMounted(fetchLogs)
   gap: 8px;
 }
 
-.log-sources a,
 .log-source-card {
+  width: 100%;
   display: grid;
   gap: 4px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   text-decoration: none;
+  background: var(--surface-soft);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  white-space: normal;
 }
 
-.log-sources a:hover {
+.log-source-card:hover {
   border-color: var(--primary);
 }
 

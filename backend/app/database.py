@@ -58,10 +58,14 @@ class Settings(BaseSettings):
 
     langchain_base_url: str = ""
     langchain_api_key: str = ""
-    langchain_model: str = "gpt-4o-mini"
+    langchain_model: str = ""
     langchain_embedding_model: str = "bge-m3"
     langchain_temperature: float = 0.2
     langchain_timeout_seconds: int = 45
+    langsmith_tracing_enabled: bool = False
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+    langsmith_api_key: str = ""
+    langsmith_project: str = "smart-labor-compliance"
 
     milvus_uri: str = "http://127.0.0.1:19530"
     milvus_token: str = ""

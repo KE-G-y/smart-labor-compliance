@@ -38,6 +38,10 @@ WEB_BOILERPLATE_LINES = {
     "新媒体分享",
     "登录",
     "注册",
+    "搜索",
+    "首页",
+    "正文",
+    ">",
     "简体",
     "繁体",
     "网站首页",
@@ -50,7 +54,69 @@ WEB_BOILERPLATE_LINES = {
     "标题",
     "全文",
     "当前位置",
+    "简",
+    "繁",
+    "无障碍",
+    "适老版",
+    "微信矩阵",
+    "机构概况",
+    "政务公开",
+    "政民互动",
+    "机关党建",
+    "廉政纪检",
+    "专题专栏",
+    "医保要闻",
+    "省医保动态",
+    "政策法规数据库",
+    "规范性文件",
+    "通知公告",
+    "分享：",
+    "扫一扫：分享至微信",
+    "扫一扫在手机打开当前页",
+    "关闭",
+    "X",
 }
+WEB_FOOTER_START_LINES = {
+    "相关新闻",
+    "附件下载",
+    "相关稿件",
+    "国家部委网站",
+    "省直部门网站",
+    "省级人社部门网站",
+    "地市人社局网站",
+    "中央人民政府门户网站",
+    "陕西省人民政府门户网站",
+    "国家医疗保障局",
+    "省级医疗保障局",
+    "市级医疗保障局",
+    "联系我们",
+    "网站地图",
+}
+WEB_FOOTER_PREFIXES = (
+    "版权所有：",
+    "主办单位:",
+    "主办单位：",
+    "联系电话:",
+    "联系电话：",
+    "联系方式：",
+    "网站标识码",
+    "陕ICP备",
+    "陕公网安备",
+    "网站支持IPV6",
+)
+MARKDOWN_BLOCK_LINE_RE = re.compile(r"^\s*(#{1,6}\s+|[-*]\s+|\d+[.、]\s+|\|)")
+SENTENCE_END_RE = re.compile(r"[。！？!?；;：:]$")
+WRAPPED_LINE_CONTINUATION_PREFIX_RE = re.compile(r"^[，。、；：！？）】》%％/]|^(元|月|日|年|个|名|人|厅|局|APP|小程序)")
+GENERATED_BODY_SECTION_HEADINGS = {
+    "来源元数据",
+    "元数据",
+    "入库提示",
+    "文档元数据",
+    "入库说明",
+    "入库建议",
+    "本地资料位置",
+}
+GENERATED_BODY_LINE_PREFIXES = ("来源URL", "抓取日期", "页面标题")
 
 
 @dataclass
@@ -183,6 +249,8 @@ def clean_web_boilerplate(text: str) -> str:
             lines.append("")
             previous = ""
             continue
+        if line in WEB_FOOTER_START_LINES or any(line.startswith(prefix) for prefix in WEB_FOOTER_PREFIXES):
+            break
         if line in WEB_BOILERPLATE_LINES:
             continue
         if line == previous:
@@ -190,6 +258,37 @@ def clean_web_boilerplate(text: str) -> str:
         lines.append(line)
         previous = line
     return normalize_text("\n".join(lines))
+
+
+def should_join_wrapped_lines(current: str, next_line: str) -> bool:
+    if not current or not next_line:
+        return False
+    if MARKDOWN_BLOCK_LINE_RE.match(current) or MARKDOWN_BLOCK_LINE_RE.match(next_line):
+        return False
+    if SENTENCE_END_RE.search(current):
+        return False
+    if WRAPPED_LINE_CONTINUATION_PREFIX_RE.match(next_line):
+        return True
+    if len(current) <= 2 and CHINESE_TEXT_RE.search(current) and CHINESE_TEXT_RE.search(next_line):
+        return True
+    if len(next_line) <= 3 and CHINESE_TEXT_RE.search(current) and CHINESE_TEXT_RE.search(next_line):
+        return True
+    if re.search(r"[A-Za-z0-9]$", current) and re.match(r"^[A-Za-z0-9%％/]", next_line):
+        return True
+    if current.endswith(("、", "，", ",", "（", "(", "和", "与", "及", "为", "按", "由", "在", "从", "每")):
+        return True
+    return False
+
+
+def repair_wrapped_lines(text: str) -> str:
+    repaired: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if repaired and should_join_wrapped_lines(repaired[-1], line):
+            repaired[-1] = repaired[-1] + line
+        else:
+            repaired.append(raw_line)
+    return "\n".join(repaired)
 
 
 def slugify(value: str, fallback: str) -> str:
@@ -373,6 +472,66 @@ def frontmatter(items: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+def split_source_ids(value: str) -> list[str]:
+    return [item.strip() for item in re.split(r"[,;，；]+", value or "") if item.strip()]
+
+
+def build_source_lookup(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
+    lookup: dict[str, dict[str, str]] = {}
+    for row in rows:
+        source_id = row.get("source_id", "").strip()
+        if source_id:
+            lookup[source_id] = row
+    return lookup
+
+
+def format_external_source_links(source_ids: str, source_lookup: dict[str, dict[str, str]]) -> tuple[str, str, str]:
+    lines: list[str] = []
+    references: list[str] = []
+    first_url = ""
+    for source_id in split_source_ids(source_ids):
+        source = source_lookup.get(source_id)
+        if not source:
+            continue
+        url = source.get("url", "").strip()
+        if not url:
+            continue
+        if not first_url:
+            first_url = url
+        title = source.get("title", source_id).strip() or source_id
+        lines.append(f"- {source_id}：{title}（官方来源）{url}")
+        references.append(f"{source_id}: {url}")
+    if not lines:
+        return "", "", ""
+    return "\n".join(lines), "; ".join(references), first_url
+
+
+def clean_business_markdown_text(text: str) -> str:
+    if not text:
+        return ""
+    lines: list[str] = []
+    skip_until_heading_level: int | None = None
+    for raw_line in text.splitlines():
+        heading_match = re.match(r"^(#{1,6})\s+(.+?)\s*$", raw_line)
+        if heading_match:
+            heading_level = len(heading_match.group(1))
+            heading = heading_match.group(2).strip().strip(":：")
+            if skip_until_heading_level is not None and heading_level <= skip_until_heading_level:
+                skip_until_heading_level = None
+            if heading_level >= 2 and heading in GENERATED_BODY_SECTION_HEADINGS:
+                skip_until_heading_level = heading_level
+                continue
+        if skip_until_heading_level is not None:
+            continue
+        stripped = raw_line.strip()
+        if any(stripped.startswith(f"{prefix}:") or stripped.startswith(f"{prefix}：") for prefix in GENERATED_BODY_LINE_PREFIXES):
+            continue
+        lines.append(raw_line)
+    cleaned = repair_wrapped_lines("\n".join(lines))
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned
+
+
 def make_source_document(
     row: dict[str, str],
     source_root: Path,
@@ -388,6 +547,7 @@ def make_source_document(
     body = parse_source_text(source_path)
     if source_path.suffix.lower() in {".txt", ".html", ".htm"}:
         body = clean_web_boilerplate(body)
+    body = clean_business_markdown_text(body)
     summaries = summary_map.get(source_id, [])
 
     output_file = output_root / "documents" / "official_sources" / f"{source_id}_{slugify(title, source_id)}.md"
@@ -399,6 +559,7 @@ def make_source_document(
             + shift_markdown_headings(summary_text, levels=2)
         )
     summary_text = "\n\n".join(summary_blocks).strip()
+    summary_text = clean_business_markdown_text(summary_text)
 
     content = "\n\n".join(
         part
@@ -423,27 +584,8 @@ def make_source_document(
                 }
             ),
             f"# {title}",
-            "## 来源元数据\n\n"
-            + metadata_table(
-                [
-                    ("来源编号", source_id),
-                    ("资料类型", source_type),
-                    ("发布机关", row.get("issuer", "")),
-                    ("适用地区", row.get("region", "")),
-                    ("发布日期", row.get("publish_date", "")),
-                    ("执行/施行日期", row.get("effective_date", "")),
-                    ("效力状态", row.get("validity_status", "")),
-                    ("复核状态", row.get("review_status", "")),
-                    ("官方来源", row.get("url", "")),
-                    ("入库源文件", source_relative),
-                ]
-            ),
             "## 知识摘要\n\n" + summary_text if summary_text else "",
             "## 正文\n\n" + body,
-            "## 入库提示\n\n"
-            "- 本文档已按单一官方来源去重整理，适合作为 LangChain/Milvus 的原始文档输入。\n"
-            "- 向量入库后仍应在回答中展示发布日期、执行日期、适用地区和复核状态。\n"
-            "- 涉及年度参数、金额标准、地址电话或个案处理时，应提示人工核验最新官方口径。",
         ]
         if part
     )
@@ -471,7 +613,11 @@ def make_source_document(
     )
 
 
-def make_faq_documents(source_root: Path, output_root: Path) -> list[PreparedDocument]:
+def make_faq_documents(
+    source_root: Path,
+    output_root: Path,
+    source_lookup: dict[str, dict[str, str]],
+) -> list[PreparedDocument]:
     faq_path = source_root / "05_FAQ标准问答" / "CSV数据" / "faq_seed.csv"
     if not faq_path.exists():
         return []
@@ -480,43 +626,34 @@ def make_faq_documents(source_root: Path, output_root: Path) -> list[PreparedDoc
         faq_id = row["faq_id"].strip()
         title = row["question"].strip()
         source_ids = row.get("source_ids", "").replace(";", ",")
+        source_links, source_urls, first_url = format_external_source_links(source_ids, source_lookup)
+        frontmatter_items = {
+            "document_id": faq_id,
+            "kb_category": "standard_faq",
+            "doc_type": "FAQ标准问答",
+            "title": title,
+            "source_ids": source_ids,
+            "category": row.get("category", ""),
+            "region": row.get("region", ""),
+            "risk_level": row.get("risk_level", ""),
+            "updated_at": row.get("updated_at", ""),
+            "source_relative_path": package_relative(faq_path, source_root),
+            "chunk_size": CHUNK_SIZE,
+            "chunk_overlap": CHUNK_OVERLAP,
+        }
+        if source_urls:
+            frontmatter_items["source_urls"] = source_urls
+        if first_url:
+            frontmatter_items["url"] = first_url
         output_file = output_root / "documents" / "faqs" / f"{faq_id}_{slugify(title, faq_id)}.md"
         content = "\n\n".join(
             [
-                frontmatter(
-                    {
-                        "document_id": faq_id,
-                        "kb_category": "standard_faq",
-                        "doc_type": "FAQ标准问答",
-                        "title": title,
-                        "source_ids": source_ids,
-                        "category": row.get("category", ""),
-                        "region": row.get("region", ""),
-                        "risk_level": row.get("risk_level", ""),
-                        "updated_at": row.get("updated_at", ""),
-                        "source_relative_path": package_relative(faq_path, source_root),
-                        "chunk_size": CHUNK_SIZE,
-                        "chunk_overlap": CHUNK_OVERLAP,
-                    }
-                ),
+                frontmatter(frontmatter_items),
                 f"# {faq_id} {title}",
                 "## 问题\n\n" + title,
                 "## 相似问法\n\n" + (row.get("aliases", "").replace("|", "\n\n") or "-"),
                 "## 标准答案\n\n" + row.get("answer", "").strip(),
-                "## 元数据\n\n"
-                + metadata_table(
-                    [
-                        ("FAQ编号", faq_id),
-                        ("分类", row.get("category", "")),
-                        ("适用地区", row.get("region", "")),
-                        ("风险等级", row.get("risk_level", "")),
-                        ("引用来源", source_ids),
-                        ("更新时间", row.get("updated_at", "")),
-                    ]
-                ),
-                "## 入库提示\n\n"
-                "- FAQ 用于提升常见问法召回率，回答时仍应回链到引用来源编号对应的官方资料。\n"
-                "- 如果 FAQ 与官方来源全文存在冲突，应以最新官方来源和人工复核结果为准。",
+                "## 外部来源链接\n\n" + source_links if source_links else "",
             ]
         )
         write_text(output_file, content)
@@ -533,7 +670,7 @@ def make_faq_documents(source_root: Path, output_root: Path) -> list[PreparedDoc
                 validity_status="有效",
                 review_status="待人工复核",
                 source_ids=source_ids,
-                url="",
+                url=first_url,
                 prepared_file=output_file.relative_to(output_root).as_posix(),
                 source_relative_path=package_relative(faq_path, source_root),
                 sha256=sha256_text(content),
@@ -570,6 +707,7 @@ def make_company_policy_documents(source_root: Path, output_root: Path) -> list[
     for index, source_path in enumerate(sorted(policy_dir.glob("*.md")), start=1):
         raw_text = read_text(source_path)
         meta, body = parse_simple_frontmatter(raw_text)
+        body = clean_business_markdown_text(body)
         document_id = f"COMPANY{index:03d}"
         title = meta.get("制度名称") or source_path.stem.replace("_入库版", "")
         source_relative = package_relative(source_path, source_root)
@@ -596,21 +734,7 @@ def make_company_policy_documents(source_root: Path, output_root: Path) -> list[
                     }
                 ),
                 f"# {title}",
-                "## 来源元数据\n\n"
-                + metadata_table(
-                    [
-                        ("企业名称", meta.get("企业名称", "")),
-                        ("资料类型", meta.get("资料类型", "")),
-                        ("制度版本", meta.get("制度版本", "")),
-                        ("资料状态", meta.get("资料状态", "")),
-                        ("来源文件", meta.get("来源文件", "")),
-                        ("入库源文件", source_relative),
-                    ]
-                ),
                 "## 正文\n\n" + body,
-                "## 入库提示\n\n"
-                "- 企业制度资料应与国家法律法规、陕西地方政策共同检索。\n"
-                "- 如果企业制度低于强制性法律法规，应按法律法规优先并提示制度修订风险。",
             ]
         )
         write_text(output_file, content)
@@ -643,7 +767,7 @@ def write_manifest(output_root: Path, documents: list[PreparedDocument], source_
     fieldnames = list(asdict(documents[0]).keys()) if documents else [field.name for field in PreparedDocument.__dataclass_fields__.values()]
     manifest_csv = output_root / "manifest.csv"
     with manifest_csv.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         for item in documents:
             writer.writerow(asdict(item))
@@ -661,7 +785,11 @@ def write_manifest(output_root: Path, documents: list[PreparedDocument], source_
 
     upload_plan = sorted(documents, key=lambda item: (-item.vector_priority, item.document_id))
     with (output_root / "upload_plan.csv").open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["order", "document_id", "title", "kb_category", "prepared_file", "source_ids", "notes"])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["order", "document_id", "title", "kb_category", "prepared_file", "source_ids", "notes"],
+            lineterminator="\n",
+        )
         writer.writeheader()
         for index, item in enumerate(upload_plan, start=1):
             writer.writerow(
@@ -764,12 +892,11 @@ def prepare(source_root: Path, output_root: Path) -> None:
         raise SystemExit(f"sources.csv not found: {sources_csv}")
 
     summary_map = build_summary_map(source_root)
-    documents = [
-        make_source_document(row, source_root, output_root, summary_map)
-        for row in csv_rows(sources_csv)
-    ]
+    source_rows = csv_rows(sources_csv)
+    source_lookup = build_source_lookup(source_rows)
+    documents = [make_source_document(row, source_root, output_root, summary_map) for row in source_rows]
     documents.extend(make_company_policy_documents(source_root, output_root))
-    documents.extend(make_faq_documents(source_root, output_root))
+    documents.extend(make_faq_documents(source_root, output_root, source_lookup))
     documents.sort(key=lambda item: (item.kb_category, item.document_id))
 
     write_manifest(output_root, documents, source_root)

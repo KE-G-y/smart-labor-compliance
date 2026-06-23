@@ -22,7 +22,7 @@
             :disabled="loading"
             @keydown.ctrl.enter="submitQuestion"
           />
-          <div class="file-strip">
+          <div v-if="attachmentAvailable" class="file-strip">
             <input ref="fileInput" type="file" class="sr-only" @change="handleFileChange" />
             <button class="btn" type="button" :disabled="loading" @click="openFilePicker">
               {{ t('attachFile') }}
@@ -139,10 +139,16 @@
             <div v-if="sources.length" class="subsection">
               <h3>{{ t('sources') }}</h3>
               <div class="source-list">
-                <a v-for="source in sources" :key="source.title" :href="source.url || '#'" target="_blank" rel="noreferrer" class="source-item">
+                <button
+                  v-for="source in groupedSources"
+                  :key="sourceKey(source)"
+                  class="source-item"
+                  type="button"
+                  @click="openSourceDetail(source)"
+                >
                   <strong>{{ source.title }}</strong>
-                  <span>{{ source.snippet }}</span>
-                </a>
+                  <span>{{ sourceListSummary(source) }}</span>
+                </button>
               </div>
             </div>
 
@@ -199,16 +205,19 @@
         </aside>
       </section>
     </main>
+    <SourceDetailModal :open="sourceDetailOpen" :source="selectedSource" @close="closeSourceDetail" />
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { chat, chatWithFile, getRecommendedQuestions, getTenantCode, getTenantPublic, setTenantCode, stopChatGeneration, submitFeedback } from '@/api'
+import { chat, chatWithFile, getChatCapabilities, getRecommendedQuestions, getTenantCode, getTenantPublic, setTenantCode, stopChatGeneration, submitFeedback } from '@/api'
 import { useI18n } from '@/i18n'
 import { renderMarkdown } from '@/utils/markdown'
 import { displayedRiskLevel as getDisplayedRiskLevel, normalizeRiskLevel, riskFromAnswer } from '@/utils/risk'
+import { groupSources } from '@/utils/sources'
 import AppSelect from '@/components/AppSelect.vue'
+import SourceDetailModal from '@/components/SourceDetailModal.vue'
 import AppTopbar from '@/components/AppTopbar.vue'
 
 const { t, locale, riskLabel } = useI18n()
@@ -240,15 +249,19 @@ const showRemark = ref(false)
 const feedbackRemark = ref('')
 const answeredQuestion = ref('')
 const attachedFile = ref(null)
+const attachmentAvailable = ref(false)
 const fileInput = ref(null)
 const activeGenerationId = ref('')
 const requestController = ref(null)
 const stopping = ref(false)
 const contextOpen = ref(localStorage.getItem('chat_context_open') === 'true')
+const selectedSource = ref(null)
+const sourceDetailOpen = ref(false)
 const LAST_CHAT_KEY = 'chat_last_state'
 
 const displayedRiskLevel = computed(() => getDisplayedRiskLevel({ answer: answer.value, risk_level: riskLevel.value }))
 const renderedAnswer = computed(() => renderMarkdown(answer.value))
+const groupedSources = computed(() => groupSources(sources.value))
 const riskText = computed(() => riskLabel(displayedRiskLevel.value))
 const riskClass = computed(() => displayedRiskLevel.value === 'high' ? 'danger' : displayedRiskLevel.value === 'medium' ? 'warning' : 'success')
 const responseTimeText = computed(() => {
@@ -331,6 +344,7 @@ const clearAnswer = () => {
   feedbackSubmitted.value = false
   showRemark.value = false
   feedbackRemark.value = ''
+  closeSourceDetail()
 }
 
 const saveLastChat = () => {
@@ -374,6 +388,7 @@ const persistTenant = () => {
   setTenantCode(tenantCode.value)
   loadTenant()
   loadRecommended()
+  loadChatCapabilities()
 }
 
 const handleProvinceChange = (value) => {
@@ -402,16 +417,33 @@ const loadRecommended = async () => {
   }
 }
 
+const loadChatCapabilities = async () => {
+  try {
+    const res = await getChatCapabilities()
+    attachmentAvailable.value = Boolean(res.data?.attachments?.available)
+  } catch (error) {
+    attachmentAvailable.value = false
+  }
+  if (!attachmentAvailable.value) {
+    removeFile()
+  }
+}
+
 const fillQuestion = (value) => {
   if (loading.value) return
   question.value = value
 }
 
 const openFilePicker = () => {
+  if (!attachmentAvailable.value) return
   fileInput.value?.click()
 }
 
 const handleFileChange = (event) => {
+  if (!attachmentAvailable.value) {
+    removeFile()
+    return
+  }
   attachedFile.value = event.target.files?.[0] || null
 }
 
@@ -431,6 +463,22 @@ const normalizeResponseTime = (value) => {
   if (value === null || value === undefined || value === '') return null
   const numeric = Number(value)
   return Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric) : null
+}
+
+const sourceKey = (source) => [source.document_id || source.local_file || source.title, source.url || '', source.source_type || ''].join('|')
+const sourceListSummary = (source) => {
+  const count = Array.isArray(source.chunks) ? source.chunks.length : 0
+  return count > 1 ? t('sourceChunkCount').replace('{count}', count) : t('sourceListHint')
+}
+
+const openSourceDetail = (source) => {
+  selectedSource.value = source
+  sourceDetailOpen.value = true
+}
+
+const closeSourceDetail = () => {
+  sourceDetailOpen.value = false
+  selectedSource.value = null
 }
 
 const submitQuestion = async () => {
@@ -460,7 +508,7 @@ const submitQuestion = async () => {
       known_facts: knownFacts.value,
       verification_focus: verificationFocus.value
     }
-    const res = attachedFile.value
+    const res = attachedFile.value && attachmentAvailable.value
       ? await chatWithFile(payload, attachedFile.value, { signal: requestController.value.signal })
       : await chat(payload, { signal: requestController.value.signal })
     const data = res.data || {}
@@ -544,6 +592,7 @@ onMounted(() => {
   restoreLastChat()
   loadTenant()
   loadRecommended()
+  loadChatCapabilities()
 })
 
 watch(question, (value) => {
@@ -948,6 +997,7 @@ watch(contextOpen, (value) => {
 
 .source-item,
 .recommend-item {
+  width: 100%;
   display: grid;
   gap: 4px;
   padding: 12px;
@@ -958,6 +1008,8 @@ watch(contextOpen, (value) => {
   text-decoration: none;
   cursor: pointer;
   color: var(--text);
+  font: inherit;
+  white-space: normal;
 }
 
 .recommend-item:disabled {

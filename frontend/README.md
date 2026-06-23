@@ -27,6 +27,7 @@ npm run dev
 
 - `/`：用户问答，展示来源、风险等级、办事路径、反馈
 - `/history`：当前租户和浏览器用户的历史记录
+- `/project-docs`：项目说明文档中心，在线查看 README、架构、部署、知识库和排障文档
 - `/admin/login`：管理后台登录
 - `/admin`：统计、Dify/RAGFlow 在线状态
 - `/admin/tenants`：租户管理
@@ -47,4 +48,4 @@ npm run dev
 npm run build
 ```
 
-更多操作说明见项目根目录 `docs/OPERATION.md`。
+更多操作说明见项目根目录 `docs/DOCUMENTATION_INDEX.md` 和 `docs/OPERATION.md`。

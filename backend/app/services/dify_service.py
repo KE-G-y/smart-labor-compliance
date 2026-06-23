@@ -153,6 +153,7 @@ class ComplianceAnswerService:
             provider=response.provider,
             risk_level=response.risk_level,
             fallback_reason=response.fallback_reason,
+            response_time_ms=response.response_time,
         ).model_dump()
         return response
 

@@ -15,6 +15,8 @@ const requiredApiContracts = [
   ['submitFeedback', "api.post('/feedback'"],
   ['getRecommendedQuestions', "api.get('/recommended-questions'"],
   ['getTenantPublic', "api.get('/tenant-public'"],
+  ['getProjectDocs', "api.get('/project-docs'"],
+  ['getProjectDoc', "api.get(`/project-docs/${id}`"],
   ['adminLogin', "api.post('/admin/login'"],
   ['verifyToken', "api.get('/admin/verify-token'"],
   ['getStatistics', "api.get('/admin/statistics'"],
@@ -39,6 +41,7 @@ const requiredApiContracts = [
 const requiredRoutes = [
   "path: '/'",
   "path: '/history'",
+  "path: '/docs'",
   "path: '/admin/login'",
   "path: '/admin'",
   "path: '/admin/tenants'",

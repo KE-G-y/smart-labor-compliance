@@ -23,12 +23,16 @@
             </div>
             <div v-else class="service-row">
               <strong>MySQL Docker</strong>
-              <span class="tag success">connected</span>
+              <span class="tag success">{{ t('connected') }}</span>
             </div>
             <div v-for="(service, key) in services" v-show="!loading" :key="key" class="service-row">
-              <div>
-                <strong>{{ service.name }}</strong>
-                <div class="muted">{{ service.url }}</div>
+              <div class="service-info">
+                <strong>{{ serviceName(service, key) }}</strong>
+                <div class="muted">{{ serviceUrl(service) }}</div>
+                <div v-if="key === 'local_models'" class="service-meta">
+                  <span>{{ t('embeddingModel') }}：{{ modelStatusText(service.embedding) }}</span>
+                  <span>{{ t('rerankerModel') }}：{{ modelStatusText(service.reranker) }}</span>
+                </div>
               </div>
               <span :class="['tag', serviceStatusClass(service)]">
                 {{ serviceStatusText(service) }}
@@ -77,6 +81,19 @@ const topQuestionColumns = computed(() => [
   { key: 'count', label: '', width: '48px', align: 'center' }
 ])
 
+const serviceName = (service, key) => {
+  const serviceKey = `service_${key}`
+  const translated = t(serviceKey)
+  return translated !== serviceKey ? translated : service.name || key
+}
+
+const serviceUrl = (service) => service.url || service.models_dir || '-'
+
+const modelStatusText = (model = {}) => {
+  if (!model.enabled) return t('notEnabled')
+  return model.exists ? t('available') : t('missing')
+}
+
 const serviceStatusClass = (service) => {
   if (service.online === true) return 'success'
   if (service.online === false) return 'danger'
@@ -84,9 +101,9 @@ const serviceStatusClass = (service) => {
 }
 
 const serviceStatusText = (service) => {
-  if (service.online === true) return 'online'
-  if (service.online === false) return 'offline'
-  return service.configured ? 'configured' : 'not configured'
+  if (service.online === true) return t('online')
+  if (service.online === false) return t('offline')
+  return service.configured ? t('configured') : t('notConfigured')
 }
 
 const fetchStats = async () => {
@@ -112,6 +129,25 @@ onMounted(fetchStats)
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.service-info {
+  min-width: 0;
+}
+
+.service-info strong,
+.service-info .muted {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.service-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .service-loading-row {

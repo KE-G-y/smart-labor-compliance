@@ -118,11 +118,8 @@
               <div class="toolbar">
                 <span :class="['tag', riskClass]">{{ t('risk') }}: {{ riskText }}</span>
                 <span class="tag">{{ t('provider') }}: {{ provider }}</span>
+                <span v-if="responseTime !== null" class="tag">{{ t('responseTime') }}: {{ responseTimeText }}</span>
               </div>
-            </div>
-            <div v-if="fallbackReason" class="engine-alert">
-              <strong>{{ t('difyFallbackTitle') }}</strong>
-              <span>{{ fallbackReason }}</span>
             </div>
             <div class="answer-text markdown-content" v-html="renderedAnswer"></div>
 
@@ -232,8 +229,8 @@ const sources = ref([])
 const tasks = ref([])
 const suggestions = ref([])
 const answerEvaluation = ref(null)
+const responseTime = ref(null)
 const provider = ref('')
-const fallbackReason = ref('')
 const riskLevel = ref('medium')
 const questionId = ref(null)
 const recommended = ref([])
@@ -254,6 +251,12 @@ const displayedRiskLevel = computed(() => getDisplayedRiskLevel({ answer: answer
 const renderedAnswer = computed(() => renderMarkdown(answer.value))
 const riskText = computed(() => riskLabel(displayedRiskLevel.value))
 const riskClass = computed(() => displayedRiskLevel.value === 'high' ? 'danger' : displayedRiskLevel.value === 'medium' ? 'warning' : 'success')
+const responseTimeText = computed(() => {
+  if (responseTime.value === null) return '-'
+  if (responseTime.value < 1000) return `${responseTime.value}ms`
+  const seconds = responseTime.value / 1000
+  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`
+})
 const userRoleOptions = computed(() => [
   { value: 'enterprise_hr', label: t('roleEnterpriseHr') },
   { value: 'administrator_staff', label: t('roleAdministrativeStaff') },
@@ -321,8 +324,8 @@ const clearAnswer = () => {
   tasks.value = []
   suggestions.value = []
   answerEvaluation.value = null
+  responseTime.value = null
   provider.value = ''
-  fallbackReason.value = ''
   riskLevel.value = 'medium'
   questionId.value = null
   feedbackSubmitted.value = false
@@ -339,8 +342,8 @@ const saveLastChat = () => {
     tasks: tasks.value,
     suggestions: suggestions.value,
     evaluation: answerEvaluation.value,
+    responseTime: responseTime.value,
     provider: provider.value,
-    fallbackReason: fallbackReason.value,
     riskLevel: displayedRiskLevel.value,
     questionId: questionId.value
   }))
@@ -358,8 +361,8 @@ const restoreLastChat = () => {
     tasks.value = data.tasks || []
     suggestions.value = data.suggestions || []
     answerEvaluation.value = data.evaluation || null
+    responseTime.value = normalizeResponseTime(data.responseTime ?? data.response_time ?? data.evaluation?.metrics?.response_time_ms)
     provider.value = data.provider || ''
-    fallbackReason.value = data.fallbackReason || data.fallback_reason || ''
     riskLevel.value = riskFromAnswer(data.answer) || normalizeRiskLevel(data.riskLevel) || 'medium'
     questionId.value = data.questionId || null
   } catch (error) {
@@ -424,6 +427,12 @@ const setContextStorage = (key, value) => {
   else localStorage.removeItem(key)
 }
 
+const normalizeResponseTime = (value) => {
+  if (value === null || value === undefined || value === '') return null
+  const numeric = Number(value)
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric) : null
+}
+
 const submitQuestion = async () => {
   if (!question.value.trim() || loading.value) return
   const submittedQuestion = question.value
@@ -459,6 +468,8 @@ const submitQuestion = async () => {
     sources.value = data.sources || []
     tasks.value = data.related_tasks || []
     suggestions.value = data.suggestions || []
+    answerEvaluation.value = data.evaluation || null
+    responseTime.value = normalizeResponseTime(data.response_time ?? data.evaluation?.metrics?.response_time_ms)
     provider.value = data.provider || 'kb_no_match'
     fallbackReason.value = data.fallback_reason || ''
     riskLevel.value = riskFromAnswer(data.answer) || normalizeRiskLevel(data.risk_level) || 'medium'
@@ -474,7 +485,7 @@ const submitQuestion = async () => {
     sources.value = []
     tasks.value = []
     answerEvaluation.value = null
-    fallbackReason.value = ''
+    responseTime.value = null
     answeredQuestion.value = submittedQuestion
   } finally {
     loading.value = false
@@ -495,8 +506,8 @@ const stopGeneration = async () => {
   tasks.value = []
   suggestions.value = []
   answerEvaluation.value = null
+  responseTime.value = null
   provider.value = ''
-  fallbackReason.value = ''
   if (generationId) {
     try {
       await stopChatGeneration({

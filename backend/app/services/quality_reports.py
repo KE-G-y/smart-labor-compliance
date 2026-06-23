@@ -80,6 +80,30 @@ def _source_coverage_score(sources: list[SourceInfo]) -> tuple[int, str, bool]:
     return score, f"返回 {len(sources)} 个来源，其中 {with_snippet} 个包含摘要", score >= 75
 
 
+def _latency_dimension(response_time_ms: Optional[int]) -> QualityDimension:
+    if response_time_ms is None:
+        return QualityDimension("latency", "问答耗时", 88, 0.06, True, "尚未写入完整接口耗时")
+    if response_time_ms <= 3000:
+        return QualityDimension("latency", "问答耗时", 95, 0.06, True, f"完整接口耗时 {response_time_ms}ms")
+    if response_time_ms <= 10000:
+        return QualityDimension("latency", "问答耗时", 82, 0.06, True, f"完整接口耗时 {response_time_ms}ms")
+    if response_time_ms <= 30000:
+        return QualityDimension("latency", "问答耗时", 65, 0.06, False, f"完整接口耗时 {response_time_ms}ms")
+    return QualityDimension("latency", "问答耗时", 45, 0.06, False, f"完整接口耗时 {response_time_ms}ms")
+
+
+def _latency_recommendations(response_time_ms: Optional[int], provider: str) -> list[str]:
+    if response_time_ms is None:
+        return []
+    if response_time_ms <= 10000:
+        return []
+    if provider == "dify":
+        return ["本次 Dify 链路耗时偏高，建议检查 Dify 工作流节点、外部知识库检索和 `DIFY_TIMEOUT_SECONDS`。"]
+    if provider == "langchain":
+        return ["本次 LangChain 链路耗时偏高，建议检查 Milvus TopK、rerank 开关、Prompt 长度和模型服务响应。"]
+    return ["本次问答耗时偏高，建议在后台日志按 provider、风险等级和问题长度分组排查慢请求。"]
+
+
 def build_answer_quality_report(
     *,
     question: str,
@@ -88,6 +112,7 @@ def build_answer_quality_report(
     provider: str,
     risk_level: str,
     fallback_reason: Optional[str] = None,
+    response_time_ms: Optional[int] = None,
 ) -> QualityReport:
     """生成回答质量报告。
 
@@ -101,21 +126,26 @@ def build_answer_quality_report(
     document_source_count = sum(1 for item in source_items if getattr(item, "source_type", None) == "document" or item.title.startswith("[文档]"))
     findings: list[str] = []
     recommendations: list[str] = []
+    latency_dimension = _latency_dimension(response_time_ms)
+    latency_recommendations = _latency_recommendations(response_time_ms, provider)
     if provider == "precheck":
         # precheck 表示问题在模型调用前就被规则处理，例如问候或能力说明。
+        dimensions = [
+            QualityDimension("intent_routing", "意图路由", 95, 0.36, True, "已在模型调用前完成简单问候或非业务问题识别"),
+            QualityDimension("scope_control", "范围控制", 92, 0.27, True, "未进入知识库检索或外部模型生成"),
+            QualityDimension("privacy_safety", "隐私安全", 100, 0.19, True, "未发现未脱敏敏感信息"),
+            QualityDimension("provider_health", "链路状态", 80, 0.12, True, "provider=precheck"),
+            latency_dimension,
+        ]
+        score = round(sum(item.score * item.weight for item in dimensions))
         return QualityReport(
             report_type="answer",
-            score=90,
-            grade=_grade(90),
-            status=_status(90),
-            dimensions=[
-                QualityDimension("intent_routing", "意图路由", 95, 0.4, True, "已在模型调用前完成简单问候或非业务问题识别"),
-                QualityDimension("scope_control", "范围控制", 92, 0.3, True, "未进入知识库检索或外部模型生成"),
-                QualityDimension("privacy_safety", "隐私安全", 100, 0.2, True, "未发现未脱敏敏感信息"),
-                QualityDimension("provider_health", "链路状态", 80, 0.1, True, "provider=precheck"),
-            ],
+            score=score,
+            grade=_grade(score),
+            status=_status(score),
+            dimensions=dimensions,
             findings=["问题已由前置规则处理，未触发知识库检索或模型调用。"],
-            recommendations=["请继续输入劳动用工、社保、医保、假期、工资或劳动争议等合规问题。"],
+            recommendations=(["请继续输入劳动用工、社保、医保、假期、工资或劳动争议等合规问题。"] + latency_recommendations)[:6],
             metrics={
                 "answer_characters": len(normalized),
                 "source_count": 0,
@@ -123,6 +153,7 @@ def build_answer_quality_report(
                 "document_source_count": 0,
                 "provider": provider,
                 "risk_level": risk_level,
+                "response_time_ms": response_time_ms,
             },
         )
 
@@ -130,12 +161,13 @@ def build_answer_quality_report(
         # kb_no_match 是“知识库边界保护”命中：没有证据就不生成结论。
         source_score, source_detail, source_passed = _source_coverage_score(source_items)
         dimensions = [
-            QualityDimension("knowledge_boundary", "知识库边界", 92, 0.32, True, "未命中时已阻止外部常识回答"),
-            QualityDimension("source_coverage", "来源覆盖", source_score, 0.24, source_passed, source_detail),
-            QualityDimension("risk_label", "风险标注", 88, 0.14, True, "已返回风险等级或待核验提示"),
-            QualityDimension("actionability", "可执行性", 78, 0.14, True, "已提示补充事实或上传审核资料"),
+            QualityDimension("knowledge_boundary", "知识库边界", 92, 0.30, True, "未命中时已阻止外部常识回答"),
+            QualityDimension("source_coverage", "来源覆盖", source_score, 0.22, source_passed, source_detail),
+            QualityDimension("risk_label", "风险标注", 88, 0.13, True, "已返回风险等级或待核验提示"),
+            QualityDimension("actionability", "可执行性", 78, 0.13, True, "已提示补充事实或上传审核资料"),
             QualityDimension("privacy_safety", "隐私安全", 100, 0.1, True, "未发现未脱敏敏感信息"),
             QualityDimension("provider_health", "链路状态", 76, 0.06, True, "provider=kb_no_match"),
+            latency_dimension,
         ]
         score = round(sum(item.score * item.weight for item in dimensions))
         return QualityReport(
@@ -145,7 +177,7 @@ def build_answer_quality_report(
             status=_status(score),
             dimensions=dimensions,
             findings=["系统内问题未命中可用知识库证据，已按知识库边界策略停止生成。"],
-            recommendations=["请补充地区、员工身份、时间节点等事实，或先上传并审核相关政策、企业制度、FAQ 后重试。"],
+            recommendations=(["请补充地区、员工身份、时间节点等事实，或先上传并审核相关政策、企业制度、FAQ 后重试。"] + latency_recommendations)[:6],
             metrics={
                 "answer_characters": len(normalized),
                 "source_count": len(source_items),
@@ -153,6 +185,7 @@ def build_answer_quality_report(
                 "document_source_count": document_source_count,
                 "provider": provider,
                 "risk_level": risk_level,
+                "response_time_ms": response_time_ms,
             },
         )
 
@@ -202,15 +235,17 @@ def build_answer_quality_report(
         findings.append(f"当前回答使用降级引擎：{provider}。")
     if fallback_reason:
         findings.append(f"回退原因：{fallback_reason}")
+    recommendations.extend(latency_recommendations)
 
     dimensions = [
-        QualityDimension("source_coverage", "来源覆盖", source_score, 0.22, source_passed, source_detail),
-        QualityDimension("answer_structure", "结构完整", structure_score, 0.18, structure_score >= 75, f"命中 {structure_hits} 个结构要素"),
-        QualityDimension("risk_label", "风险标注", risk_score, 0.14, risk_score >= 75, "已识别风险等级" if risk_present else "缺少风险等级"),
-        QualityDimension("actionability", "可执行性", guidance_score, 0.18, guidance_score >= 80, "包含行动建议与复核提示" if guidance_score >= 80 else "行动或复核提示不足"),
-        QualityDimension("privacy_safety", "隐私安全", safety_score, 0.14, safety_score >= 80, "未发现未脱敏敏感信息" if safety_score >= 80 else "存在疑似敏感信息"),
+        QualityDimension("source_coverage", "来源覆盖", source_score, 0.2, source_passed, source_detail),
+        QualityDimension("answer_structure", "结构完整", structure_score, 0.17, structure_score >= 75, f"命中 {structure_hits} 个结构要素"),
+        QualityDimension("risk_label", "风险标注", risk_score, 0.13, risk_score >= 75, "已识别风险等级" if risk_present else "缺少风险等级"),
+        QualityDimension("actionability", "可执行性", guidance_score, 0.17, guidance_score >= 80, "包含行动建议与复核提示" if guidance_score >= 80 else "行动或复核提示不足"),
+        QualityDimension("privacy_safety", "隐私安全", safety_score, 0.13, safety_score >= 80, "未发现未脱敏敏感信息" if safety_score >= 80 else "存在疑似敏感信息"),
         QualityDimension("answer_length", "篇幅适中", length_score, 0.08, length_score >= 80, f"回答长度 {length} 字符"),
         QualityDimension("provider_health", "链路状态", provider_score, 0.06, provider_score >= 80, f"provider={provider}"),
+        latency_dimension,
     ]
     score = round(sum(item.score * item.weight for item in dimensions))
     if not findings:
@@ -233,6 +268,7 @@ def build_answer_quality_report(
             "document_source_count": document_source_count,
             "provider": provider,
             "risk_level": risk_level,
+            "response_time_ms": response_time_ms,
         },
     )
 

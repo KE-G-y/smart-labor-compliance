@@ -1,6 +1,7 @@
 from app.schemas.chat import SourceInfo
 from app.services.milvus_vector_service import VectorIndexResult
 from app.services.quality_reports import build_answer_quality_report, build_vector_ingest_quality_report
+from scripts.build_milvus_vector_db import BuildItem, BuildSummary, append_quality_report
 
 
 def test_answer_quality_report_scores_traceable_structured_answer():
@@ -42,6 +43,58 @@ def test_vector_ingest_quality_report_warns_missing_source_link():
     assert any("source_id" in item for item in report["recommendations"])
 
 
+def test_batch_builder_summarizes_vector_ingest_quality_report():
+    item = BuildItem(
+        document_id="FAQ001",
+        title="西安最低工资标准是多少？",
+        kb_category="standard_faq",
+        doc_type="FAQ标准问答",
+        region="陕西西安",
+        issuer="system",
+        publish_date="",
+        effective_date="",
+        validity_status="有效",
+        review_status="已复核",
+        source_ids="SX001",
+        url="",
+        prepared_file="documents/faqs/FAQ001.md",
+        source_relative_path="资料/faqs/FAQ001.md",
+        sha256="abc",
+        characters=1800,
+        vector_priority=70,
+        notes="",
+    )
+    result = VectorIndexResult(
+        document_id="FAQ001",
+        title=item.title,
+        filename="FAQ001.md",
+        local_file=item.prepared_file,
+        characters=1800,
+        chunks=2,
+        collection="slc_docs_demo_v1",
+    )
+    report = build_vector_ingest_quality_report(
+        result=result,
+        title=item.title,
+        source_id=12,
+        tenant_code="demo-sx",
+    ).model_dump()
+    summary = BuildSummary(
+        tenant_code="demo-sx",
+        manifest="knowledge_base/langchain_vector_import/manifest.csv",
+        collection="slc_docs_demo_v1",
+        version="v-test",
+        dry_run=False,
+    )
+
+    append_quality_report(summary, item=item, result=result, source_id=12, report=report)
+
+    assert summary.quality_overview["total_reports"] == 1
+    assert summary.quality_overview["pass_count"] == 1
+    assert summary.quality_reports[0]["document_id"] == "FAQ001"
+    assert summary.quality_reports[0]["kb_category"] == "standard_faq"
+
+
 def test_answer_quality_report_handles_precheck_provider_as_safe_routing():
     report = build_answer_quality_report(
         question="你好",
@@ -50,11 +103,14 @@ def test_answer_quality_report_handles_precheck_provider_as_safe_routing():
         provider="precheck",
         risk_level="low",
         fallback_reason="simple_small_talk",
+        response_time_ms=120,
     ).model_dump()
 
     assert report["status"] == "pass"
     assert report["metrics"]["provider"] == "precheck"
+    assert report["metrics"]["response_time_ms"] == 120
     assert any(item["key"] == "intent_routing" for item in report["dimensions"])
+    assert any(item["key"] == "latency" and item["passed"] for item in report["dimensions"])
 
 
 def test_answer_quality_report_handles_knowledge_base_no_match_boundary():
@@ -70,3 +126,20 @@ def test_answer_quality_report_handles_knowledge_base_no_match_boundary():
     assert report["status"] == "warning"
     assert report["metrics"]["provider"] == "kb_no_match"
     assert any(item["key"] == "knowledge_boundary" for item in report["dimensions"])
+
+
+def test_answer_quality_report_adds_latency_dimension_and_langchain_recommendation():
+    report = build_answer_quality_report(
+        question="员工离职后社保什么时候停缴？",
+        answer="风险等级：中\n\n结论：应结合离职时间、工资结算和当地社保经办口径处理。\n\n依据：参考官方来源。\n\n行动建议：HR 复核离职日期、申报周期和缴费状态。\n\n待核验项：以当地经办机构最终口径为准。",
+        sources=[SourceInfo(title="[文档] 西安社保办事规则 #chunk-1", snippet="离职停缴情形摘要", source_type="document")],
+        provider="langchain",
+        risk_level="medium",
+        response_time_ms=12000,
+    ).model_dump()
+
+    latency = next(item for item in report["dimensions"] if item["key"] == "latency")
+    assert report["metrics"]["response_time_ms"] == 12000
+    assert latency["score"] == 65
+    assert latency["passed"] is False
+    assert any("LangChain" in item for item in report["recommendations"])

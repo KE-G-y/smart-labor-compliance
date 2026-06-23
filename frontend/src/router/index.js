@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 const Home = () => import('@/views/Home.vue')
 const History = () => import('@/views/History.vue')
+const Docs = () => import('@/views/Docs.vue')
 const AdminLogin = () => import('@/views/admin/Login.vue')
 const AdminDashboard = () => import('@/views/admin/Dashboard.vue')
 const AdminLogs = () => import('@/views/admin/Logs.vue')
@@ -17,6 +18,8 @@ const AdminVectorVersions = () => import('@/views/admin/VectorVersions.vue')
 const routes = [
   { path: '/', name: 'Home', component: Home },
   { path: '/history', name: 'History', component: History },
+  { path: '/project-docs', name: 'Docs', component: Docs },
+  { path: '/docs', redirect: '/project-docs' },
   { path: '/admin/login', name: 'AdminLogin', component: AdminLogin },
   { path: '/admin', name: 'AdminDashboard', component: AdminDashboard, meta: { requiresAuth: true } },
   { path: '/admin/tenants', name: 'AdminTenants', component: AdminTenants, meta: { requiresAuth: true, permissions: ['tenants'] } },

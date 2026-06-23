@@ -57,8 +57,10 @@
 START_LOCAL_SERVICES=0 ./scripts/start_project.sh
 ```
 
-访问 `http://localhost:3000`
+访问：
 
+- 前端页面：`http://localhost:3000`
+- 项目说明文档中心：`http://localhost:3000/project-docs`
 
 停止项目：
 
@@ -102,6 +104,7 @@ docker compose --profile tools run --rm vector-builder
 
 ## 文档
 
+- [项目文档总索引](docs/DOCUMENTATION_INDEX.md)
 - [技术架构总览](docs/TECHNICAL_ARCHITECTURE.md)
 - [操作文档](docs/OPERATION.md)
 - [Docker 部署说明](docs/DOCKER_DEPLOYMENT.md)
@@ -113,6 +116,8 @@ docker compose --profile tools run --rm vector-builder
 - [后端需求文档](后端需求文档.md)
 - [前端需求文档](前端需求文档.md)
 - [商业化项目书](企业用工与社保合规智能平台项目书_商业化正式版.md)
+
+项目启动后，可以直接访问 `http://localhost:3000/project-docs` 在线查看这些说明文档。后端 Swagger/OpenAPI 仍位于 `http://localhost:8000/docs`。
 
 ## 重要说明
 

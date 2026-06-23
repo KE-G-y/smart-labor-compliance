@@ -22,6 +22,13 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_MODELS_DIR = BACKEND_DIR / "models"
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(BACKEND_DIR).as_posix()
+    except ValueError:
+        return path.name
+
+
 def _truthy(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -135,20 +142,34 @@ def local_model_status(config: Any = None) -> dict[str, Any]:
         "reranker": local_reranker_model_path(config),
         "fallback_bert": local_fallback_bert_model_path(config),
     }
+    embedding_enabled = local_embedding_enabled(config)
+    reranker_enabled = local_reranker_enabled(config)
+    embedding_exists = paths["embedding"].exists()
+    reranker_exists = paths["reranker"].exists()
+    configured = embedding_enabled or reranker_enabled
+    enabled_model_ready = (
+        (not embedding_enabled or embedding_exists)
+        and (not reranker_enabled or reranker_exists)
+    )
     return {
-        "models_dir": str(DEFAULT_MODELS_DIR),
+        "name": "Local Models",
+        "url": _display_path(DEFAULT_MODELS_DIR),
+        "configured": configured,
+        "online": enabled_model_ready if configured else None,
+        "status_code": None,
+        "models_dir": _display_path(DEFAULT_MODELS_DIR),
         "embedding": {
-            "enabled": local_embedding_enabled(config),
-            "path": str(paths["embedding"]),
-            "exists": paths["embedding"].exists(),
+            "enabled": embedding_enabled,
+            "path": _display_path(paths["embedding"]),
+            "exists": embedding_exists,
         },
         "reranker": {
-            "enabled": local_reranker_enabled(config),
-            "path": str(paths["reranker"]),
-            "exists": paths["reranker"].exists(),
+            "enabled": reranker_enabled,
+            "path": _display_path(paths["reranker"]),
+            "exists": reranker_exists,
         },
         "fallback_bert": {
-            "path": str(paths["fallback_bert"]),
+            "path": _display_path(paths["fallback_bert"]),
             "exists": paths["fallback_bert"].exists(),
         },
     }

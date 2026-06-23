@@ -3,8 +3,9 @@
 ## 1. 运行地址
 
 - 前端开发地址：`http://localhost:3000`
+- 项目说明文档中心：`http://localhost:3000/project-docs`
 - 后端 API：`http://127.0.0.1:8000`
-- API 文档：`http://127.0.0.1:8000/docs`
+- 后端 Swagger/OpenAPI：`http://127.0.0.1:8000/docs`
 - Dify Web：`http://127.0.0.1/`
 - RAGFlow Web：`http://127.0.0.1:8880/`
 
@@ -30,8 +31,9 @@
 启动完成后访问：
 
 - 前端页面：`http://localhost:3000`
+- 项目说明文档中心：`http://localhost:3000/project-docs`
 - 后端接口：`http://127.0.0.1:8000`
-- API 文档：`http://127.0.0.1:8000/docs`
+- 后端 Swagger/OpenAPI：`http://127.0.0.1:8000/docs`
 
 停止项目：
 
@@ -57,8 +59,8 @@ INSTALL_DEPS=0 ./scripts/start_project.sh
 # 临时调整端口，前端代理会自动指向同一次启动的后端端口
 BACKEND_PORT=8001 FRONTEND_PORT=3001 ./scripts/start_project.sh
 
-# 开启后端热重载；如果文件监听权限受限，可去掉该变量使用默认稳定启动
-BACKEND_RELOAD=1 ./scripts/start_project.sh
+# 后端默认开启热重载；如果文件监听异常，可临时关闭
+BACKEND_RELOAD=0 ./scripts/start_project.sh
 
 # 只启动前后端，不自动启动 MySQL/Milvus 等 Docker 依赖
 START_LOCAL_SERVICES=0 ./scripts/start_project.sh
@@ -77,7 +79,7 @@ START_LOCAL_SERVICES=0 ./scripts/start_project.sh
 | `MILVUS_URI` | `http://127.0.0.1:19530` | 本地一键脚本通过 Docker Compose 启动 Milvus 后暴露的地址。Docker 容器内部使用 `http://milvus:19530`。 |
 | `MILVUS_TOKEN` | 留空 | 本地 Milvus standalone 默认不需要；Zilliz Cloud 或开启鉴权的 Milvus 才需要。 |
 | `MILVUS_COLLECTION` | `slc_compliance_docs` | 项目默认基础 collection 名称；向量库版本构建会生成并激活版本化 collection。 |
-| `VECTOR_CHUNK_SIZE` / `VECTOR_CHUNK_OVERLAP` | `1000` / `150` | 项目默认切分参数，可按文档长度和检索效果调优。 |
+| `VECTOR_CHUNK_SIZE` / `VECTOR_CHUNK_OVERLAP` | `500` / `50` | 项目默认切分参数，可按文档长度和检索效果调优。 |
 
 如果只想先看后台和基础页面，可以暂时不填 `LANGCHAIN_API_KEY`。此时登录、租户、来源、日志等基础功能仍可运行，但 LangChain 问答、Embedding 和文档向量入库不可用。
 
@@ -147,7 +149,7 @@ npm run dev
 当前项目按“可配置接入 + Milvus 知识库边界控制”实现：
 
 - 后台概览会探测 Dify 与 RAGFlow 在线状态
-- 配置 `DIFY_API_KEY` 后，问答优先调用 Dify Chat API
+- 管理端「系统配置」可选择 `LangChain 优先`、`Dify 优先`、`仅 LangChain`、`仅 Dify` 或 `仅向量库边界保护`；默认策略为 `LangChain 优先，Dify 兜底`
 - 本机 Dify + RAGFlow 检索链路可能超过 30 秒，建议在 `.env` 中设置 `DIFY_TIMEOUT_SECONDS=60`
 - 未配置 Dify API Key 或调用失败时，系统不会读取 MySQL FAQ 兜底；系统内问题必须依赖 Milvus 知识库片段
 - RAGFlow 当前作为知识库建设和资料整理辅助服务，后台记录 Web/API 地址与数据集映射字段
@@ -193,8 +195,10 @@ Dify 工作流建议输出结构：
 ## 10. 文档维护约定
 
 - 根目录 `README.md` 维护项目总览、技术栈优势、快速启动和文档入口。
+- `docs/DOCUMENTATION_INDEX.md` 维护项目说明文档总索引、可信状态和在线文档中心口径。
 - `backend/README.md` 维护后端启动、配置、初始化和后端技术栈说明。
 - `frontend/README.md` 维护前端启动、页面清单、构建和前端技术栈说明。
 - `docs/DIFY_RAGFLOW_GUIDE.md` 维护 Dify/RAGFlow 分工、工作流输入输出和知识整理建议。
 - `docs/SECURITY_AND_TENANCY.md` 维护租户隔离、安全控制和生产上线检查。
+- 新增可在线预览的项目说明文档时，需要同步登记到 `backend/app/routers/project_docs.py` 的 `DOCUMENTS` 白名单。
 - 文档和种子数据中的本地资料路径统一使用相对路径；接口路径、前端路由和本地服务 URL 保持运行所需格式。

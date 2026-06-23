@@ -32,6 +32,14 @@ if str(BACKEND_ROOT) not in sys.path:
 logger = logging.getLogger("build_milvus_vector_db")
 
 
+def display_path(path: Path) -> str:
+    """把本机路径转换成项目内相对路径，避免摘要和页面暴露绝对路径。"""
+    try:
+        return path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return path.name
+
+
 @dataclass(frozen=True)
 class BuildItem:
     document_id: str
@@ -67,6 +75,9 @@ class BuildSummary:
     failed: int = 0
     chunks: int = 0
     document_indexed: int = 0
+    quality_reports: list[dict] | None = None
+    quality_overview: dict | None = None
+    quality_report_errors: list[dict[str, str]] | None = None
     errors: list[dict[str, str]] | None = None
 
 
@@ -194,6 +205,57 @@ def extra_metadata(item: BuildItem) -> dict:
     }
 
 
+def refresh_quality_overview(summary: BuildSummary) -> None:
+    """根据每份文档的质量报告，汇总出版本级质量概览。"""
+    reports = summary.quality_reports or []
+    scores = [int(report.get("score") or 0) for report in reports]
+    status_counts: dict[str, int] = {"pass": 0, "warning": 0, "fail": 0}
+    for report in reports:
+        status = str(report.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+    summary.quality_overview = {
+        "total_reports": len(reports),
+        "average_score": round(sum(scores) / len(scores)) if scores else 0,
+        "min_score": min(scores) if scores else 0,
+        "max_score": max(scores) if scores else 0,
+        "pass_count": status_counts.get("pass", 0),
+        "warning_count": status_counts.get("warning", 0),
+        "fail_count": status_counts.get("fail", 0),
+        "needs_review_count": status_counts.get("warning", 0) + status_counts.get("fail", 0),
+    }
+
+
+def append_quality_report(
+    summary: BuildSummary,
+    *,
+    item: BuildItem,
+    result,
+    source_id: Optional[int],
+    report: dict,
+) -> None:
+    """把单文档质量报告写入本次构建摘要，方便后台版本页查看。"""
+    if summary.quality_reports is None:
+        summary.quality_reports = []
+    summary.quality_reports.append(
+        {
+            "document_id": item.document_id,
+            "title": item.title or getattr(result, "title", ""),
+            "kb_category": item.kb_category,
+            "doc_type": item.doc_type,
+            "prepared_file": item.prepared_file,
+            "source_id": source_id or 0,
+            "score": int(report.get("score") or 0),
+            "grade": report.get("grade") or "",
+            "status": report.get("status") or "",
+            "dimensions": report.get("dimensions") or [],
+            "findings": report.get("findings") or [],
+            "recommendations": report.get("recommendations") or [],
+            "metrics": report.get("metrics") or {},
+        }
+    )
+    refresh_quality_overview(summary)
+
+
 def reset_collection(collection: str, milvus_uri: str, milvus_token: str) -> None:
     try:
         from pymilvus import utility
@@ -225,6 +287,7 @@ def index_items(
     summary: BuildSummary,
     dry_run: bool,
     strict: bool,
+    quality_report_builder: Optional[Callable[..., object]] = None,
     progress_callback: Optional[Callable[[BuildSummary], None]] = None,
 ) -> BuildSummary:
     """批量把 manifest 中的文件写入 Milvus，并累计构建结果。"""
@@ -258,12 +321,43 @@ def index_items(
             summary.indexed += 1
             summary.document_indexed += 1
             summary.chunks += result.chunks
+            quality_score = "-"
+            if quality_report_builder:
+                try:
+                    quality_report = quality_report_builder(
+                        result=result,
+                        title=item.title or getattr(result, "title", ""),
+                        source_id=source_id,
+                        tenant_code=tenant.code,
+                    )
+                    append_quality_report(
+                        summary,
+                        item=item,
+                        result=result,
+                        source_id=source_id,
+                        report=quality_report.model_dump(),
+                    )
+                    quality_score = summary.quality_reports[-1]["score"] if summary.quality_reports else "-"
+                except Exception as exc:
+                    if summary.quality_report_errors is None:
+                        summary.quality_report_errors = []
+                    if len(summary.quality_report_errors) < 20:
+                        summary.quality_report_errors.append(
+                            {
+                                "document_id": item.document_id,
+                                "title": item.title,
+                                "error_type": exc.__class__.__name__,
+                                "error": str(exc),
+                            }
+                        )
+                    logger.exception("failed to build quality report for %s: %s", item.document_id, exc)
             logger.info(
-                "indexed %s | chunks=%s | characters=%s | collection=%s",
+                "indexed %s | chunks=%s | characters=%s | collection=%s | quality=%s",
                 item.document_id,
                 result.chunks,
                 getattr(result, "characters", 0),
                 getattr(result, "collection", summary.collection),
+                quality_score,
             )
         except Exception as exc:
             summary.failed += 1
@@ -309,7 +403,7 @@ def main() -> int:
         # dry-run 只检查 manifest 和文件路径，不连接 Milvus，适合部署前验证资料是否齐全。
         summary = BuildSummary(
             tenant_code=args.tenant_code,
-            manifest=str(manifest_path),
+            manifest=display_path(manifest_path),
             collection=os.getenv("MILVUS_COLLECTION", "slc_compliance_docs"),
             version=args.version or "dry-run",
             dry_run=True,
@@ -317,7 +411,7 @@ def main() -> int:
         for item in items:
             summary.total += 1
             document_path = resolve_document_path(manifest_path, item.prepared_file)
-            logger.info("[dry-run] %s | %s | %s", item.document_id, item.kb_category, document_path)
+            logger.info("[dry-run] %s | %s | %s", item.document_id, item.kb_category, display_path(document_path))
             summary.skipped += 1
         write_summary(args.summary_file, summary)
         logger.info("summary: %s", asdict(summary))
@@ -326,6 +420,7 @@ def main() -> int:
     from app.database import SessionLocal, init_db
     from app.models import Source, Tenant
     from app.services.milvus_vector_service import MilvusVectorService
+    from app.services.quality_reports import build_vector_ingest_quality_report
     from app.services.runtime_config import get_runtime_config
     from app.services.vector_version_service import (
         activate_version,
@@ -356,7 +451,7 @@ def main() -> int:
         runtime_config = replace(runtime_config, milvus_collection=collection_name)
         summary = BuildSummary(
             tenant_code=tenant.code,
-            manifest=str(manifest_path),
+            manifest=display_path(manifest_path),
             collection=runtime_config.milvus_collection,
             version=version_name,
             dry_run=args.dry_run,
@@ -366,7 +461,7 @@ def main() -> int:
             tenant=tenant,
             version=version_name,
             collection_name=collection_name,
-            manifest_path=str(manifest_path),
+            manifest_path=display_path(manifest_path),
             manifest_hash=manifest_sha256(manifest_path),
             categories=sorted(categories),
             embedding_model=runtime_config.langchain_embedding_model,
@@ -411,6 +506,7 @@ def main() -> int:
                 summary=summary,
                 dry_run=args.dry_run,
                 strict=args.strict,
+                quality_report_builder=build_vector_ingest_quality_report,
                 progress_callback=save_progress,
             )
             finish_version_build(

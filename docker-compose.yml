@@ -102,6 +102,20 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    command:
+      - python
+      - -m
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - app
+      - --reload-dir
+      - scripts
     restart: unless-stopped
     environment:
       APP_ENV: "${APP_ENV:-production}"
@@ -154,6 +168,20 @@ services:
       - "${BACKEND_HOST_PORT:-8000}:8000"
     volumes:
       - backend_storage:/app/storage
+      - ./backend/app:/app/app
+      - ./backend/scripts:/app/scripts
+      - ./README.md:/app/README.md:ro
+      - ./docs:/app/docs:ro
+      - ./backend/README.md:/app/backend/README.md:ro
+      - ./frontend/README.md:/app/frontend/README.md:ro
+      - ./knowledge_base/langchain_vector_import/README.md:/app/knowledge_base/langchain_vector_import/README.md:ro
+      - ./knowledge_base/langchain_vector_import/excluded_files.md:/app/knowledge_base/langchain_vector_import/excluded_files.md:ro
+      - ./前端需求文档.md:/app/前端需求文档.md:ro
+      - ./后端需求文档.md:/app/后端需求文档.md:ro
+      - ./企业用工与社保合规智能平台项目书_商业化正式版.md:/app/企业用工与社保合规智能平台项目书_商业化正式版.md:ro
+      - ./debug-vector-ingest-error.md:/app/debug-vector-ingest-error.md:ro
+      - ./debug-milvus-offline-status.md:/app/debug-milvus-offline-status.md:ro
+      - ./debug-normal-query-no-match.md:/app/debug-normal-query-no-match.md:ro
     depends_on:
       mysql:
         condition: service_healthy

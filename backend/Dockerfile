@@ -18,8 +18,8 @@ RUN python -m pip install --upgrade pip \
 COPY app ./app
 COPY scripts ./scripts
 
-RUN mkdir -p /app/storage/uploads
+RUN mkdir -p /app/storage/uploads /app/backend /app/frontend /app/docs /app/knowledge_base/langchain_vector_import
 
 EXPOSE 8000
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "app", "--reload-dir", "scripts"]

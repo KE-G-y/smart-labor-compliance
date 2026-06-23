@@ -13,7 +13,7 @@ BACKEND_HOST="${BACKEND_HOST:-0.0.0.0}"
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 INSTALL_DEPS="${INSTALL_DEPS:-auto}"
 START_LOCAL_SERVICES="${START_LOCAL_SERVICES:-auto}"
-BACKEND_RELOAD="${BACKEND_RELOAD:-0}"
+BACKEND_RELOAD="${BACKEND_RELOAD:-1}"
 BACKEND_PID_FILE="$RUN_DIR/backend.pid"
 FRONTEND_PID_FILE="$RUN_DIR/frontend.pid"
 BACKEND_LOG="$LOG_DIR/backend.log"
@@ -388,7 +388,7 @@ start_backend() {
   printf '\n== %s start backend on %s:%s, reload=%s ==\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$BACKEND_HOST" "$BACKEND_PORT" "$BACKEND_RELOAD" >> "$BACKEND_LOG"
   backend_args=("$PYTHON_BIN" -m uvicorn app.main:app --host "$BACKEND_HOST" --port "$BACKEND_PORT")
   if reload_enabled; then
-    backend_args+=(--reload)
+    backend_args+=(--reload --reload-dir app --reload-dir scripts)
   fi
   (
     cd "$BACKEND_DIR"

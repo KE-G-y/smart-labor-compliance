@@ -10,7 +10,7 @@ from starlette.responses import JSONResponse
 
 from app.database import init_db, settings
 from app.response import ok
-from app.routers import admin, chat, feedback
+from app.routers import admin, chat, feedback, project_docs
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -75,6 +75,7 @@ app.add_middleware(
 app.include_router(chat.router)
 app.include_router(feedback.router)
 app.include_router(admin.router)
+app.include_router(project_docs.router)
 
 
 @app.exception_handler(HTTPException)

@@ -89,6 +89,8 @@ export const clearHistory = (userId) => api.delete('/history', { params: { user_
 export const submitFeedback = (data) => api.post('/feedback', data)
 export const getRecommendedQuestions = () => api.get('/recommended-questions')
 export const getTenantPublic = () => api.get('/tenant-public')
+export const getProjectDocs = () => api.get('/project-docs')
+export const getProjectDoc = (id) => api.get(`/project-docs/${id}`)
 
 export const adminLogin = (data) => api.post('/admin/login', data)
 export const verifyToken = () => api.get('/admin/verify-token')

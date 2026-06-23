@@ -64,4 +64,4 @@ python -c "from app.database import init_db; init_db()"
 - 平台超管：`admin / Admin@123456`
 - 演示租户管理员：`tenant_admin / Tenant@123456 / demo-sx`
 
-更多说明见项目根目录的 `docs/OPERATION.md`、`docs/SECURITY_AND_TENANCY.md`。
+项目说明文档接口位于 `app/routers/project_docs.py`，只读取白名单中的 Markdown 文件。更多说明见项目根目录的 `docs/DOCUMENTATION_INDEX.md`、`docs/OPERATION.md`、`docs/SECURITY_AND_TENANCY.md`。

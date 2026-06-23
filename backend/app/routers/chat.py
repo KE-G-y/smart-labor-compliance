@@ -2,6 +2,7 @@
 import csv
 import io
 import json
+import time
 import uuid
 from datetime import date, datetime
 from typing import Optional
@@ -19,6 +20,7 @@ from app.response import ok
 from app.schemas.chat import ChatRequest, ChatResponse, ChatStopRequest, HistoryResponse
 from app.security import hash_ip, sanitize_text
 from app.services.dify_service import ChatAttachment, ComplianceAnswerService
+from app.services.quality_reports import build_answer_quality_report
 
 router = APIRouter(prefix="/api", tags=["问答"])
 
@@ -40,6 +42,11 @@ HISTORY_EXPORT_FIELDS = [
 ]
 
 
+def _elapsed_ms(start_time: float) -> int:
+    """计算接口完整耗时，单位毫秒。"""
+    return max(0, int((time.perf_counter() - start_time) * 1000))
+
+
 async def _resolve_tenant(requested_tenant_code: Optional[str], header_tenant: Tenant, db: Session) -> Tenant:
     tenant = header_tenant
     if requested_tenant_code and requested_tenant_code != header_tenant.code:
@@ -59,7 +66,19 @@ def _persist_chat_log(
     language: str,
     question: str,
     response: ChatResponse,
+    response_time: Optional[int] = None,
 ) -> ChatResponse:
+    if response_time is not None:
+        response.response_time = response_time
+    response.evaluation = build_answer_quality_report(
+        question=question,
+        answer=response.answer,
+        sources=response.sources,
+        provider=response.provider,
+        risk_level=response.risk_level,
+        fallback_reason=response.fallback_reason,
+        response_time_ms=response.response_time,
+    ).model_dump()
     chat_log = ChatLog(
         tenant_id=tenant.id,
         user_id=user_id,
@@ -168,6 +187,7 @@ async def chat(
     db: Session = Depends(get_db),
     header_tenant: Tenant = Depends(get_public_tenant),
 ):
+    request_start = time.perf_counter()
     if not request_data.question.strip():
         raise HTTPException(status_code=400, detail="问题不能为空")
 
@@ -214,6 +234,7 @@ async def chat(
         language=request_data.language,
         question=question,
         response=response,
+        response_time=_elapsed_ms(request_start),
     )
     return ok(response.model_dump(), "回答生成成功")
 
@@ -241,6 +262,7 @@ async def chat_with_file(
     db: Session = Depends(get_db),
     header_tenant: Tenant = Depends(get_public_tenant),
 ):
+    request_start = time.perf_counter()
     if not question.strip():
         raise HTTPException(status_code=400, detail="问题不能为空")
     if not file.filename:
@@ -301,6 +323,7 @@ async def chat_with_file(
         language=language,
         question=question,
         response=response,
+        response_time=_elapsed_ms(request_start),
     )
     return ok(response.model_dump(), "回答生成成功")
 

@@ -65,6 +65,8 @@ ALLOWED_SOURCE_FILE_EXTENSIONS = {".pdf", ".doc", ".docx", ".txt", ".md", ".html
 ALLOWED_IMPORT_FILE_EXTENSIONS = {".csv"}
 SOURCE_EXPORT_FIELDS = ["id", "source_code", "title", "url", "doc_type", "issuer", "region", "validity_status", "review_status", "reviewed_at", "reviewed_by", "local_file", "description"]
 PACKAGE_EXPORT_FIELDS = ["id", "name", "region", "version", "description", "categories", "status", "dify_dataset_id", "ragflow_dataset_id"]
+REPO_ROOT = Path(__file__).resolve().parents[3]
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _require_permission(current_admin: dict, permission: str) -> None:
@@ -72,8 +74,41 @@ def _require_permission(current_admin: dict, permission: str) -> None:
         raise HTTPException(status_code=403, detail="当前账号没有该操作权限")
 
 
+def _display_path(value: Optional[str], *, root: Path = REPO_ROOT) -> Optional[str]:
+    """把历史配置里的本机绝对路径转成页面可展示的相对路径。"""
+    text = (value or "").strip()
+    if not text:
+        return value
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        return text
+    try:
+        return path.resolve().relative_to(root).as_posix()
+    except ValueError:
+        return path.name
+
+
+def _vector_quality_payload(build_summary: Optional[dict]) -> tuple[dict, list[dict], list[dict]]:
+    """从版本构建摘要中提取前端需要的质量信息。
+
+    build_summary 里还可能包含脚本路径、错误堆栈等运维字段；接口只返回
+    入库质量相关内容，避免后台列表承载太多无关信息。
+    """
+    if not isinstance(build_summary, dict):
+        return {}, [], []
+    overview = build_summary.get("quality_overview") if isinstance(build_summary.get("quality_overview"), dict) else {}
+    reports = build_summary.get("quality_reports") if isinstance(build_summary.get("quality_reports"), list) else []
+    quality_errors = (
+        build_summary.get("quality_report_errors")
+        if isinstance(build_summary.get("quality_report_errors"), list)
+        else []
+    )
+    return overview, reports[:200], quality_errors[:20]
+
+
 def _serialize_vector_version(item: VectorCollectionVersion) -> dict:
     tenant = item.tenant
+    quality_overview, quality_reports, quality_report_errors = _vector_quality_payload(item.build_summary)
     return {
         "id": item.id,
         "tenant_id": item.tenant_id,
@@ -83,7 +118,7 @@ def _serialize_vector_version(item: VectorCollectionVersion) -> dict:
         "collection_name": item.collection_name,
         "display_name": item.display_name,
         "description": item.description,
-        "manifest_path": item.manifest_path,
+        "manifest_path": _display_path(item.manifest_path),
         "manifest_sha256": item.manifest_sha256,
         "categories": item.categories or [],
         "embedding_model": item.embedding_model,
@@ -93,6 +128,9 @@ def _serialize_vector_version(item: VectorCollectionVersion) -> dict:
         "indexed_count": item.indexed_count,
         "failed_count": item.failed_count,
         "chunk_count": item.chunk_count,
+        "quality_overview": quality_overview,
+        "quality_reports": quality_reports,
+        "quality_report_errors": quality_report_errors,
         "status": item.status,
         "is_active": item.is_active,
         "build_started_at": item.build_started_at,
@@ -451,10 +489,10 @@ async def get_system_config(
         vector_chunk_size=runtime_config.vector_chunk_size,
         vector_chunk_overlap=runtime_config.vector_chunk_overlap,
         local_embedding_enabled=runtime_config.local_embedding_enabled,
-        local_embedding_model_path=runtime_config.local_embedding_model_path,
+        local_embedding_model_path=_display_path(runtime_config.local_embedding_model_path, root=BACKEND_ROOT),
         local_reranker_enabled=runtime_config.local_reranker_enabled,
-        local_reranker_model_path=runtime_config.local_reranker_model_path,
-        local_fallback_bert_model_path=runtime_config.local_fallback_bert_model_path,
+        local_reranker_model_path=_display_path(runtime_config.local_reranker_model_path, root=BACKEND_ROOT),
+        local_fallback_bert_model_path=_display_path(runtime_config.local_fallback_bert_model_path, root=BACKEND_ROOT),
         ragflow_base_url=runtime_config.ragflow_base_url,
         ragflow_web_url=runtime_config.ragflow_web_url,
         ragflow_api_key_configured=bool(runtime_config.ragflow_api_key),

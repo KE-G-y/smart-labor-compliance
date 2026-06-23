@@ -101,9 +101,25 @@
               <input v-model="form.milvus_uri" class="input" :placeholder="t('milvusUriPlaceholder')" />
             </div>
             <div class="form-group">
-              <label>{{ t('milvusCollection') }}</label>
-              <input v-model="form.milvus_collection" class="input" :placeholder="t('milvusCollectionPlaceholder')" />
+              <label>{{ t('vectorVersion') }}</label>
+              <AppSelect
+                v-model="form.active_vector_version_id"
+                :options="vectorVersionOptions"
+                :placeholder="t('vectorVersionSelectPlaceholder')"
+                :disabled="vectorVersionsLoading || !vectorVersionOptions.length"
+                @change="handleVectorVersionChange"
+              />
+              <div class="config-hint">
+                <span v-if="selectedVectorVersion" :class="['tag', selectedVectorVersion.is_active ? 'success' : 'warning']">
+                  {{ selectedVectorVersion?.is_active ? t('vectorVersionActive') : t('pendingActivation') }}
+                </span>
+                <span>{{ selectedVectorVersionHint }}</span>
+              </div>
             </div>
+          </div>
+          <div class="form-group">
+            <label>{{ t('milvusCollection') }}</label>
+            <input v-model="form.milvus_collection" class="input readonly-input" readonly :placeholder="t('milvusCollectionPlaceholder')" />
           </div>
           <div class="form-row">
             <div class="form-group">
@@ -291,14 +307,18 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
-import { getSystemConfig, updateSystemConfig } from '@/api'
+import { computed, onMounted, ref } from 'vue'
+import { activateVectorVersion, getSystemConfig, getVectorVersions, updateSystemConfig } from '@/api'
 import { useI18n } from '@/i18n'
+import AppSelect from '@/components/AppSelect.vue'
 import AdminLayout from './AdminLayout.vue'
 
 const { t } = useI18n()
 const loading = ref(false)
 const saving = ref(false)
+const vectorVersionsLoading = ref(false)
+const vectorVersions = ref([])
+const originalActiveVectorVersionId = ref('')
 const queryStrategyOptions = [
   // 管理员在这里决定用户问答优先走哪条链路；后端会按同名策略排序调用 provider。
   { value: 'langchain_first', label: t('langchainFirst') },
@@ -322,6 +342,7 @@ const form = ref({
   milvus_token_configured: false,
   milvus_token_clear: false,
   milvus_collection: 'slc_compliance_docs',
+  active_vector_version_id: '',
   vector_top_k: 4,
   vector_chunk_size: 1000,
   vector_chunk_overlap: 150,
@@ -344,6 +365,63 @@ const form = ref({
 })
 
 const cleanSecret = (value) => (value || '').trim()
+const normalizeId = (value) => (value === undefined || value === null ? '' : String(value))
+const usableVectorVersions = computed(() => vectorVersions.value.filter(item => ['ready', 'active'].includes(item.status) || item.is_active))
+const selectedVectorVersion = computed(() => {
+  const selectedId = normalizeId(form.value.active_vector_version_id)
+  return usableVectorVersions.value.find(item => normalizeId(item.id) === selectedId) || null
+})
+const vectorVersionOptions = computed(() => usableVectorVersions.value.map(item => ({
+  value: normalizeId(item.id),
+  label: vectorVersionLabel(item)
+})))
+const selectedVectorVersionHint = computed(() => {
+  if (vectorVersionsLoading.value) return t('loading')
+  if (!usableVectorVersions.value.length) return t('noUsableVectorVersionsHint')
+  if (!selectedVectorVersion.value) return t('vectorVersionSelectHint')
+  return `${selectedVectorVersion.value.collection_name} · ${selectedVectorVersion.value.chunk_count || 0} ${t('vectorChunks')}`
+})
+
+const vectorVersionLabel = (item) => {
+  const status = item.is_active ? t('vectorVersionActive') : (item.status === 'ready' ? t('vectorVersionReady') : item.status)
+  const chunks = item.chunk_count || 0
+  return `${item.version || item.collection_name} · ${status} · ${chunks} ${t('vectorChunks')}`
+}
+
+const fetchVectorVersions = async () => {
+  vectorVersionsLoading.value = true
+  try {
+    const res = await getVectorVersions({ page: 1, page_size: 100 })
+    vectorVersions.value = res.data?.list || []
+    syncSelectedVectorVersion()
+  } finally {
+    vectorVersionsLoading.value = false
+  }
+}
+
+const syncSelectedVectorVersion = () => {
+  const activeId = normalizeId(form.value.active_vector_version_id)
+  if (activeId && usableVectorVersions.value.some(item => normalizeId(item.id) === activeId)) {
+    return
+  }
+  const byCollection = usableVectorVersions.value.find(item => item.collection_name === form.value.milvus_collection)
+  if (byCollection) {
+    form.value.active_vector_version_id = normalizeId(byCollection.id)
+    return
+  }
+  const active = usableVectorVersions.value.find(item => item.is_active)
+  if (active) {
+    form.value.active_vector_version_id = normalizeId(active.id)
+    if (!form.value.milvus_collection) form.value.milvus_collection = active.collection_name
+  }
+}
+
+const handleVectorVersionChange = (_value, option) => {
+  const version = usableVectorVersions.value.find(item => normalizeId(item.id) === normalizeId(option?.value || form.value.active_vector_version_id))
+  if (version) {
+    form.value.milvus_collection = version.collection_name
+  }
+}
 
 const fetchConfig = async () => {
   loading.value = true
@@ -366,6 +444,8 @@ const fetchConfig = async () => {
       form.value.milvus_token_configured = res.data.milvus_token_configured || false
       form.value.milvus_token_clear = false
       form.value.milvus_collection = res.data.milvus_collection || 'slc_compliance_docs'
+      form.value.active_vector_version_id = normalizeId(res.data.active_vector_version_id)
+      originalActiveVectorVersionId.value = normalizeId(res.data.active_vector_version_id)
       form.value.vector_top_k = res.data.vector_top_k || 4
       form.value.vector_chunk_size = res.data.vector_chunk_size || 1000
       form.value.vector_chunk_overlap = res.data.vector_chunk_overlap ?? 150
@@ -385,6 +465,7 @@ const fetchConfig = async () => {
       form.value.ragflow_api_key_configured = res.data.ragflow_api_key_configured || false
       form.value.ragflow_api_key_clear = false
       form.value.ragflow_timeout_seconds = res.data.ragflow_timeout_seconds || 10
+      syncSelectedVectorVersion()
     }
   } finally {
     loading.value = false
@@ -423,7 +504,6 @@ const saveConfig = async () => {
     } else if (cleanSecret(form.value.milvus_token)) {
       payload.milvus_token = cleanSecret(form.value.milvus_token)
     }
-    if (form.value.milvus_collection !== undefined) payload.milvus_collection = form.value.milvus_collection
     if (form.value.vector_top_k !== undefined && form.value.vector_top_k !== '') payload.vector_top_k = form.value.vector_top_k
     if (form.value.vector_chunk_size !== undefined && form.value.vector_chunk_size !== '') payload.vector_chunk_size = form.value.vector_chunk_size
     if (form.value.vector_chunk_overlap !== undefined && form.value.vector_chunk_overlap !== '') payload.vector_chunk_overlap = form.value.vector_chunk_overlap
@@ -448,8 +528,14 @@ const saveConfig = async () => {
     }
     if (form.value.ragflow_timeout_seconds !== undefined && form.value.ragflow_timeout_seconds !== '') payload.ragflow_timeout_seconds = form.value.ragflow_timeout_seconds
     await updateSystemConfig(payload)
+    const selectedId = normalizeId(form.value.active_vector_version_id)
+    if (selectedId && selectedId !== originalActiveVectorVersionId.value) {
+      const version = selectedVectorVersion.value
+      await activateVectorVersion(selectedId, version?.tenant_id ? { tenant_id: version.tenant_id } : {})
+    }
     alert(t('saveSuccess') || '保存成功')
-    fetchConfig()
+    await fetchConfig()
+    await fetchVectorVersions()
   } catch (e) {
     const errorMessage = e.response?.data?.message || e.response?.data?.detail || e.message || t('saveFailed') || '保存失败'
     alert(errorMessage)
@@ -458,7 +544,9 @@ const saveConfig = async () => {
   }
 }
 
-onMounted(fetchConfig)
+onMounted(async () => {
+  await Promise.all([fetchConfig(), fetchVectorVersions()])
+})
 </script>
 
 <style scoped>
@@ -554,6 +642,11 @@ onMounted(fetchConfig)
 .form-group .input:disabled {
   cursor: not-allowed;
   opacity: 0.65;
+}
+
+.form-group .readonly-input {
+  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.02);
 }
 
 .form-group .input::placeholder {

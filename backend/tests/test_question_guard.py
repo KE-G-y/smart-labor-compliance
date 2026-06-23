@@ -8,6 +8,19 @@ def test_question_guard_handles_simple_small_talk_before_retrieval():
     assert decision.should_short_circuit is True
     assert decision.provider == "precheck"
     assert "企业用工" in decision.answer
+    assert "企业用工与社保合规智能助手" in decision.answer
+    assert "已入库知识库" in decision.answer
+
+
+def test_question_guard_answers_system_role_and_usage_questions():
+    decision = classify_question("你是什么系统？这个系统怎么用？")
+
+    assert decision.category == "system_role"
+    assert decision.should_short_circuit is True
+    assert decision.provider == "precheck"
+    assert decision.fallback_reason == "system_role_intro"
+    assert "企业 HR" in decision.answer
+    assert "不会凭空给出合规结论" in decision.answer
 
 
 def test_question_guard_keeps_business_question_with_greeting_in_domain_flow():

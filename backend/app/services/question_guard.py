@@ -110,6 +110,44 @@ SMALL_TALK_PATTERNS: tuple[str, ...] = (
     "介绍一下",
 )
 
+SYSTEM_ROLE_PATTERNS: tuple[str, ...] = (
+    "你是谁",
+    "你是什么",
+    "你是什么系统",
+    "你是干什么的",
+    "你能做什么",
+    "你会做什么",
+    "你可以做什么",
+    "能帮我什么",
+    "系统能做什么",
+    "平台能做什么",
+    "这个系统怎么用",
+    "系统怎么用",
+    "怎么使用系统",
+    "如何使用系统",
+    "使用说明",
+    "功能介绍",
+    "角色介绍",
+    "系统角色",
+    "平台角色",
+    "你的角色",
+    "你的定位",
+    "你的职责",
+    "你的能力",
+    "问答范围",
+    "能回答什么",
+    "可以回答什么",
+    "回答依据",
+    "回答规则",
+    "你怎么回答",
+    "数据来源",
+    "知识库边界",
+    "知识库范围",
+    "怎么提问",
+    "如何提问",
+    "使用时要注意什么",
+)
+
 HIGH_RISK_OUT_OF_SCOPE_KEYWORDS: tuple[str, ...] = (
     "诊断",
     "处方",
@@ -265,6 +303,15 @@ def is_simple_small_talk(question: str) -> bool:
     return compact in {"?", "？", "help", "帮助"}
 
 
+def is_system_role_question(question: str) -> bool:
+    """Return whether the user is asking what this system is or how to use it."""
+    text = sanitize_text(question) or ""
+    compact = _compact(text)
+    if not compact:
+        return False
+    return _contains_any(compact, SYSTEM_ROLE_PATTERNS)
+
+
 def is_high_risk_out_of_scope(question: str) -> bool:
     """Return whether a non-domain question asks for high-risk advice."""
     text = sanitize_text(question) or ""
@@ -283,8 +330,11 @@ def _default_suggestions() -> list[str]:
 
 def _small_talk_answer() -> str:
     return (
-        "您好，我可以帮助查询企业用工、社保、医保、假期、工资、劳动合同和劳动争议等合规问题。\n"
-        "请尽量补充地区、员工身份、发生时间和具体事项，我会优先从已入库知识库中检索依据后回答。"
+        "您好，我是企业用工与社保合规智能助手，主要面向企业 HR、员工和平台管理员，"
+        "辅助查询劳动合同、入离职、工资、社保、医保、假期、工伤、劳动争议和知识库资料管理等问题。\n"
+        "系统内合规问题会优先从已入库知识库、FAQ 和 Milvus 向量库中检索依据，再基于来源生成回答；"
+        "如果没有检索到足够依据，我会提示补充资料，不会凭空给出合规结论。\n"
+        "使用时请尽量补充地区、员工身份、发生时间、业务事实和你希望的输出格式。"
     )
 
 
@@ -314,6 +364,16 @@ def classify_question(question: str) -> QuestionGuardDecision:
             answer=_high_risk_out_of_scope_answer(),
             risk_level="high",
             fallback_reason="high_risk_out_of_scope",
+            suggestions=_default_suggestions(),
+        )
+
+    if is_system_role_question(text):
+        return QuestionGuardDecision(
+            category="system_role",
+            should_short_circuit=True,
+            answer=_small_talk_answer(),
+            risk_level="low",
+            fallback_reason="system_role_intro",
             suggestions=_default_suggestions(),
         )
 

@@ -112,13 +112,32 @@ const parseWidth = (width) => {
   return match ? Number(match[1]) : 0
 }
 
+const isLeftSticky = (column) => column.sticky === true || column.sticky === 'left'
+const isRightSticky = (column) => column.sticky === 'right' || column.stickyRight
+
 const resolvedColumns = computed(() => {
   let left = 0
-  return props.columns.map((column) => {
-    const resolved = { ...column, stickyLeft: column.sticky ? left : null }
-    if (column.sticky) left += parseWidth(column.width)
+  const columns = props.columns.map((column) => {
+    const resolved = { ...column, stickyLeft: null, stickyRight: null, stickySide: null }
+    if (isLeftSticky(column)) {
+      resolved.stickyLeft = left
+      resolved.stickySide = 'left'
+      left += parseWidth(column.width)
+    }
     return resolved
   })
+
+  let right = 0
+  for (let index = columns.length - 1; index >= 0; index -= 1) {
+    const column = columns[index]
+    if (isRightSticky(column)) {
+      column.stickyRight = right
+      column.stickySide = 'right'
+      right += parseWidth(column.width)
+    }
+  }
+
+  return columns
 })
 const wrapClass = computed(() => [
   props.dense ? 'app-table-wrap-dense' : ''
@@ -149,13 +168,16 @@ const formatValue = (value) => {
 
 const alignClass = (align = 'left') => `align-${align}`
 
-const stickyStyle = (column) => column.sticky
-  ? { left: `${column.stickyLeft}px` }
-  : null
+const stickyStyle = (column) => {
+  if (column.stickySide === 'left') return { left: `${column.stickyLeft}px` }
+  if (column.stickySide === 'right') return { right: `${column.stickyRight}px` }
+  return null
+}
 
 const cellClass = (column, area) => [
   column.cellClass,
-  column.sticky ? 'is-sticky' : '',
-  column.sticky ? `sticky-${area}` : ''
+  column.stickySide ? 'is-sticky' : '',
+  column.stickySide ? `is-sticky-${column.stickySide}` : '',
+  column.stickySide ? `sticky-${area}` : ''
 ]
 </script>

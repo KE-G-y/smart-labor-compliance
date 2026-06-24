@@ -1,5 +1,5 @@
 <template>
-  <AdminLayout :title="t('vectorVersionsTitle')" :subtitle="t('vectorVersionsSubtitle')">
+  <AdminLayout :title="t('vectorVersionsTitle')" :subtitle="t('vectorVersionsSubtitle')" content-mode="fixed">
     <div class="grid">
       <section class="panel">
         <div class="section-title">
@@ -76,71 +76,98 @@
           </template>
         </AppTable>
         <AppPagination v-model:page="page" v-model:page-size="pageSize" :total="total" @change="fetchVersions" />
-        <section v-if="selectedQualityVersion" class="quality-detail">
-          <div class="quality-detail-head">
-            <div>
-              <h3>{{ t('vectorQualityReportTitle') }}：{{ selectedQualityVersion.version }}</h3>
-              <p>{{ selectedQualityVersion.collection_name }}</p>
-            </div>
-            <button class="btn ghost" type="button" @click="selectedQualityVersion = null">{{ t('hideQualityReport') }}</button>
-          </div>
-          <div class="quality-summary-grid">
-            <div class="quality-summary-item">
-              <span>{{ t('vectorQualityReportCount') }}</span>
-              <strong>{{ selectedQualityOverview.total_reports || selectedQualityReports.length }}</strong>
-            </div>
-            <div class="quality-summary-item">
-              <span>{{ t('vectorQualityAverageScore') }}</span>
-              <strong>{{ selectedQualityOverview.average_score || 0 }}</strong>
-            </div>
-            <div class="quality-summary-item">
-              <span>{{ t('vectorQualityNeedsReview') }}</span>
-              <strong>{{ selectedQualityOverview.needs_review_count || 0 }}</strong>
-            </div>
-            <div class="quality-summary-item">
-              <span>{{ t('vectorQualityPassCount') }}</span>
-              <strong>{{ selectedQualityOverview.pass_count || 0 }}</strong>
-            </div>
-            <div class="quality-summary-item">
-              <span>{{ t('vectorQualityWarningCount') }}</span>
-              <strong>{{ selectedQualityOverview.warning_count || 0 }}</strong>
-            </div>
-            <div class="quality-summary-item">
-              <span>{{ t('vectorQualityFailCount') }}</span>
-              <strong>{{ selectedQualityOverview.fail_count || 0 }}</strong>
-            </div>
-          </div>
-          <div v-if="selectedQualityReports.length" class="quality-report-list">
-            <article v-for="report in previewQualityReports" :key="report.document_id || report.prepared_file" class="quality-report-item">
-              <div class="quality-report-item-head">
-                <strong>{{ report.title || report.document_id || '-' }}</strong>
-                <span :class="['tag', qualityClass(report.status)]">
-                  {{ qualityStatusText(report.status) }} · {{ report.score || 0 }} / {{ report.grade || '-' }}
-                </span>
-              </div>
-              <div class="quality-report-meta">
-                <span>{{ t('documentId') }}：{{ report.document_id || '-' }}</span>
-                <span>{{ t('category') }}：{{ report.kb_category || '-' }}</span>
-                <span>{{ t('docType') }}：{{ report.doc_type || '-' }}</span>
-                <span>{{ t('preparedFile') }}：{{ report.prepared_file || '-' }}</span>
-              </div>
-              <div v-if="report.findings?.length" class="quality-report-block">
-                <span>{{ t('vectorQualityFindings') }}</span>
-                <p>{{ report.findings.join('；') }}</p>
-              </div>
-              <div v-if="report.recommendations?.length" class="quality-report-block">
-                <span>{{ t('vectorQualityRecommendations') }}</span>
-                <p>{{ report.recommendations.join('；') }}</p>
-              </div>
-            </article>
-            <p v-if="selectedQualityReports.length > previewQualityReports.length" class="quality-more">
-              {{ t('vectorQualityMoreHint') }} {{ previewQualityReports.length }} / {{ selectedQualityReports.length }}
-            </p>
-          </div>
-          <div v-else class="empty">{{ t('vectorQualityNoReport') }}</div>
-        </section>
       </section>
     </div>
+    <Teleport to="body">
+      <div v-if="selectedQualityVersion" class="modal-mask vector-quality-mask" @click.self="closeQualityModal">
+        <div class="modal vector-quality-modal" role="dialog" aria-modal="true" :aria-labelledby="qualityTitleId">
+          <div class="section-title modal-header">
+            <div>
+              <h2 :id="qualityTitleId">{{ t('vectorQualityReportTitle') }}：{{ selectedQualityVersion.version }}</h2>
+              <p class="page-desc">{{ selectedQualityVersion.collection_name }}</p>
+            </div>
+            <button class="btn ghost" type="button" @click="closeQualityModal">×</button>
+          </div>
+
+          <div class="modal-body vector-quality-body">
+            <section class="vector-quality-card">
+              <span>{{ t('vectorVersion') }}</span>
+              <strong>{{ selectedQualityVersion.version || '-' }}</strong>
+              <p>{{ selectedQualityVersion.collection_name || '-' }}</p>
+            </section>
+
+            <div class="vector-quality-meta">
+              <span v-if="selectedQualityVersion.tenant_name" class="tag">{{ t('tenant') }}：{{ selectedQualityVersion.tenant_name }}</span>
+              <span v-if="selectedQualityVersion.embedding_model" class="tag">{{ t('langchainEmbeddingModel') }}：{{ selectedQualityVersion.embedding_model }}</span>
+              <span v-if="selectedQualityVersion.build_finished_at" class="tag">{{ t('buildFinishedAt') }}：{{ formatDateTime(selectedQualityVersion.build_finished_at) || '-' }}</span>
+              <span :class="['tag', statusClass(selectedQualityVersion)]">
+                {{ selectedQualityVersion.is_active ? t('vectorVersionActive') : vectorStatusLabel(selectedQualityVersion.status) }}
+              </span>
+            </div>
+
+            <div class="quality-summary-grid">
+              <div class="quality-summary-item">
+                <span>{{ t('vectorQualityReportCount') }}</span>
+                <strong>{{ selectedQualityOverview.total_reports || selectedQualityReports.length }}</strong>
+              </div>
+              <div class="quality-summary-item">
+                <span>{{ t('vectorQualityAverageScore') }}</span>
+                <strong>{{ selectedQualityOverview.average_score || 0 }}</strong>
+              </div>
+              <div class="quality-summary-item">
+                <span>{{ t('vectorQualityNeedsReview') }}</span>
+                <strong>{{ selectedQualityOverview.needs_review_count || 0 }}</strong>
+              </div>
+              <div class="quality-summary-item">
+                <span>{{ t('vectorQualityPassCount') }}</span>
+                <strong>{{ selectedQualityOverview.pass_count || 0 }}</strong>
+              </div>
+              <div class="quality-summary-item">
+                <span>{{ t('vectorQualityWarningCount') }}</span>
+                <strong>{{ selectedQualityOverview.warning_count || 0 }}</strong>
+              </div>
+              <div class="quality-summary-item">
+                <span>{{ t('vectorQualityFailCount') }}</span>
+                <strong>{{ selectedQualityOverview.fail_count || 0 }}</strong>
+              </div>
+            </div>
+
+            <section>
+              <h3>{{ t('vectorQualityReportTitle') }}</h3>
+              <div v-if="selectedQualityReports.length" class="quality-report-list">
+                <article v-for="report in selectedQualityReports" :key="report.document_id || report.prepared_file" class="quality-report-item">
+                  <div class="quality-report-item-head">
+                    <strong>{{ report.title || report.document_id || '-' }}</strong>
+                    <span :class="['tag', qualityClass(report.status)]">
+                      {{ qualityStatusText(report.status) }} · {{ report.score || 0 }} / {{ report.grade || '-' }}
+                    </span>
+                  </div>
+                  <div class="quality-report-meta">
+                    <span>{{ t('documentId') }}：{{ report.document_id || '-' }}</span>
+                    <span>{{ t('category') }}：{{ report.kb_category || '-' }}</span>
+                    <span>{{ t('docType') }}：{{ report.doc_type || '-' }}</span>
+                    <span>{{ t('preparedFile') }}：{{ report.prepared_file || '-' }}</span>
+                  </div>
+                  <div v-if="report.findings?.length" class="quality-report-block">
+                    <span>{{ t('vectorQualityFindings') }}</span>
+                    <p>{{ report.findings.join('；') }}</p>
+                  </div>
+                  <div v-if="report.recommendations?.length" class="quality-report-block">
+                    <span>{{ t('vectorQualityRecommendations') }}</span>
+                    <p>{{ report.recommendations.join('；') }}</p>
+                  </div>
+                </article>
+              </div>
+              <div v-else class="empty">{{ t('vectorQualityNoReport') }}</div>
+            </section>
+          </div>
+
+          <div class="modal-actions modal-footer vector-quality-footer">
+            <button class="btn primary" type="button" @click="closeQualityModal">{{ t('close') }}</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
     <div v-if="confirmDialog.open" class="modal-mask confirm-mask" @click.self="closeConfirmDialog">
       <div class="modal confirm-modal" role="dialog" aria-modal="true" :aria-labelledby="confirmTitleId">
         <div class="confirm-header">
@@ -211,6 +238,7 @@ const pageSize = ref(20)
 const total = ref(0)
 const status = ref('')
 const selectedQualityVersion = ref(null)
+const qualityTitleId = 'vector-quality-title'
 const confirmTitleId = 'vector-version-confirm-title'
 const confirmDialog = ref({
   open: false,
@@ -232,7 +260,6 @@ const notice = ref({
 const sequenceStart = computed(() => (page.value - 1) * pageSize.value + 1)
 const selectedQualityReports = computed(() => selectedQualityVersion.value?.quality_reports || [])
 const selectedQualityOverview = computed(() => selectedQualityVersion.value?.quality_overview || {})
-const previewQualityReports = computed(() => selectedQualityReports.value.slice(0, 12))
 const statusOptions = computed(() => [
   { value: '', label: t('allStatus') },
   { value: 'active', label: t('vectorVersionActive') },
@@ -302,6 +329,10 @@ const qualityOverviewLabel = (row) => {
 
 const toggleQuality = (row) => {
   selectedQualityVersion.value = selectedQualityVersion.value?.id === row.id ? null : row
+}
+
+const closeQualityModal = () => {
+  selectedQualityVersion.value = null
 }
 
 const canActivate = (row) => row.status === 'ready' && !row.is_active
@@ -530,6 +561,67 @@ onMounted(fetchVersions)
   padding-top: 4px;
 }
 
+.vector-quality-mask {
+  z-index: 80;
+}
+
+.vector-quality-modal {
+  width: min(1040px, calc(100vw - 32px));
+  gap: 18px;
+}
+
+.vector-quality-body {
+  display: grid;
+  gap: 14px;
+}
+
+.vector-quality-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.vector-quality-card span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.vector-quality-card strong {
+  overflow-wrap: anywhere;
+  font-size: 16px;
+}
+
+.vector-quality-card p {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.vector-quality-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.vector-quality-meta .tag {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.vector-quality-body h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.vector-quality-footer {
+  padding-top: 4px;
+}
+
 @media (max-width: 560px) {
   .confirm-modal,
   .notice-modal {
@@ -544,6 +636,10 @@ onMounted(fetchVersions)
   .confirm-icon {
     width: 36px;
     height: 36px;
+  }
+
+  .vector-quality-modal {
+    width: min(100%, calc(100vw - 24px));
   }
 }
 
@@ -702,32 +798,6 @@ onMounted(fetchVersions)
   padding: 3px 8px;
   justify-self: start;
   font-size: 12px;
-}
-
-.quality-detail {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
-}
-
-.quality-detail-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.quality-detail-head h3 {
-  margin: 0 0 4px;
-  font-size: 16px;
-}
-
-.quality-detail-head p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-  word-break: break-all;
 }
 
 .quality-summary-grid {

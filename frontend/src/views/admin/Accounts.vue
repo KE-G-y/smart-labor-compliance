@@ -1,5 +1,5 @@
 <template>
-  <AdminLayout :title="t('accountsTitle')" :subtitle="t('accountsSubtitle')">
+  <AdminLayout :title="t('accountsTitle')" :subtitle="t('accountsSubtitle')" content-mode="fixed">
     <div class="grid">
       <section class="panel">
         <div class="section-title">

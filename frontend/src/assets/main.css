@@ -593,9 +593,11 @@ a {
 .table-wrap,
 .app-table-wrap {
   min-height: 0;
+  max-height: min(calc(100vh - 220px), 720px);
   overflow-y: auto;
   overflow-x: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: rgba(102, 112, 133, 0.35) transparent;
   position: relative;
@@ -607,6 +609,10 @@ a {
 
 .panel > .app-table-wrap {
   flex: 1 1 auto;
+}
+
+.admin-scroll-fixed .panel > .app-table-wrap {
+  max-height: none;
 }
 
 .app-table-wrap::-webkit-scrollbar {
@@ -1301,13 +1307,35 @@ a {
 .admin-scroll {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: hidden;
+  overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(102, 112, 133, 0.35) transparent;
+}
+
+.admin-scroll-fixed {
+  overflow: hidden;
+}
+
+.admin-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.admin-scroll::-webkit-scrollbar-thumb {
+  background: rgba(102, 112, 133, 0.28);
+  border-radius: 999px;
 }
 
 .admin-scroll .container {
   max-width: none;
+  min-height: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+.admin-scroll-fixed .container {
   height: 100%;
   min-height: 0;
   display: flex;
@@ -1317,12 +1345,41 @@ a {
 
 .admin-scroll .container > .grid,
 .admin-scroll .container > .panel {
-  flex: 1 1 auto;
   min-height: 0;
 }
 
 .admin-scroll .container > .grid > .panel:only-child {
   min-height: 0;
+}
+
+.admin-scroll-fixed .container > .grid,
+.admin-scroll-fixed .container > .panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.admin-scroll-fixed .container > .grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-scroll-fixed .container > .grid > .panel,
+.admin-scroll-fixed .container > .grid > .dashboard-grid {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.admin-scroll-fixed .container > .grid > .panel:not(:last-child) {
+  flex: 0 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.admin-scroll-fixed .container > .grid > .panel:last-child,
+.admin-scroll-fixed .container > .grid > .dashboard-grid {
+  flex: 1 1 auto;
 }
 
 .account-menu {
@@ -1968,6 +2025,23 @@ a {
 
   .admin-scroll {
     overflow: visible;
+  }
+
+  .admin-scroll-fixed .container {
+    height: auto;
+    display: block;
+    overflow: visible;
+  }
+
+  .admin-scroll-fixed .container > .grid,
+  .admin-scroll-fixed .container > .panel,
+  .admin-scroll-fixed .container > .grid > .panel,
+  .admin-scroll-fixed .container > .grid > .dashboard-grid {
+    overflow: visible;
+  }
+
+  .admin-scroll-fixed .container > .grid {
+    display: grid;
   }
 
   .admin-shell.collapsed .brand-copy {

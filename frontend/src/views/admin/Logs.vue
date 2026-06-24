@@ -1,5 +1,5 @@
 <template>
-  <AdminLayout :title="t('logsTitle')" :subtitle="t('logsSubtitle')">
+  <AdminLayout :title="t('logsTitle')" :subtitle="t('logsSubtitle')" content-mode="fixed">
     <section class="panel">
       <div class="toolbar" style="margin-bottom: 14px">
         <input v-model="keyword" class="input" style="max-width: 320px" :placeholder="t('searchQuestion')" />

@@ -1,5 +1,5 @@
 <template>
-  <AdminLayout :title="t('feedbacksTitle')" :subtitle="t('feedbacksSubtitle')">
+  <AdminLayout :title="t('feedbacksTitle')" :subtitle="t('feedbacksSubtitle')" content-mode="fixed">
     <section class="panel">
       <div class="toolbar" style="margin-bottom: 14px">
         <AppSelect v-model="status" style="width: 150px" :options="statusOptions" />

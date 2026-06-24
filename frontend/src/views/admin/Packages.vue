@@ -1,5 +1,5 @@
 <template>
-  <AdminLayout :title="t('packagesTitle')" :subtitle="t('packagesSubtitle')">
+  <AdminLayout :title="t('packagesTitle')" :subtitle="t('packagesSubtitle')" content-mode="fixed">
     <section class="panel">
       <div class="section-title">
         <h2>{{ t('packageList') }}</h2>

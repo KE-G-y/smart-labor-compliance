@@ -76,7 +76,7 @@
           </div>
         </div>
       </header>
-      <div class="admin-scroll">
+      <div class="admin-scroll" :class="{ 'admin-scroll-fixed': contentMode === 'fixed' }">
         <div class="container">
         <slot />
         </div>
@@ -94,7 +94,8 @@ import AppSelect from '@/components/AppSelect.vue'
 
 defineProps({
   title: { type: String, default: '' },
-  subtitle: { type: String, default: '' }
+  subtitle: { type: String, default: '' },
+  contentMode: { type: String, default: 'auto' }
 })
 
 const router = useRouter()

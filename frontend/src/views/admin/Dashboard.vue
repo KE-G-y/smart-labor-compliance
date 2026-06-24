@@ -1,5 +1,5 @@
 <template>
-  <AdminLayout :title="t('dashboardTitle')" :subtitle="t('dashboardSubtitle')">
+  <AdminLayout :title="t('dashboardTitle')" :subtitle="t('dashboardSubtitle')" content-mode="fixed">
     <div class="grid">
       <div class="stat-grid">
         <div class="stat"><span>{{ t('totalQuestions') }}</span><strong>{{ loading ? '-' : stats.total_questions || 0 }}</strong></div>
@@ -14,7 +14,7 @@
             <h2>{{ t('serviceStatus') }}</h2>
             <button class="btn" :disabled="loading" @click="fetchStats">{{ t('refresh') }}</button>
           </div>
-          <div class="grid">
+          <div class="service-list">
             <div v-if="loading" class="service-row service-loading-row">
               <div class="app-table-loading" role="status" aria-live="polite">
                 <span class="app-table-spinner" aria-hidden="true"></span>
@@ -154,16 +154,46 @@ onMounted(fetchStats)
   justify-content: center;
 }
 
+.service-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(102, 112, 133, 0.35) transparent;
+}
+
+.service-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.service-list::-webkit-scrollbar-thumb {
+  background: rgba(102, 112, 133, 0.32);
+  border-radius: 999px;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(360px, 2fr);
   gap: 16px;
   align-items: stretch;
+  min-height: 0;
+}
+
+.dashboard-grid > .panel {
+  min-height: 0;
+  overflow: hidden;
 }
 
 @media (max-width: 1180px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
+    grid-template-rows: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

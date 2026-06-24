@@ -14,11 +14,11 @@
         <form v-else class="config-form" @submit.prevent="saveConfig">
           <div class="form-group">
             <label>{{ t('queryStrategy') }}</label>
-            <select v-model="form.query_strategy" class="input">
-              <option v-for="option in queryStrategyOptions" :key="option.value" :value="option.value">
-                {{ option.label }}
-              </option>
-            </select>
+            <AppSelect
+              v-model="form.query_strategy"
+              style="width: 100%; max-width: 360px;"
+              :options="queryStrategyOptions"
+            />
           </div>
           <div class="config-hint">
             <span class="tag">{{ t('configured') }}</span>

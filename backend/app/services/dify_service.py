@@ -1200,11 +1200,26 @@ class ComplianceAnswerService:
         patterns = [
             r"风险等级\s*[:：]\s*(?:\*\*)?\s*(高风险|中风险|低风险|高|中|低|high|medium|low)",
             r"初步风险等级\s*为\s*[:：]?\s*(?:\*\*)?\s*(高风险|中风险|低风险|高|中|低|high|medium|low)",
+            r"(?:属|属于|构成|认定为|判断为|应视为|可视为)\s*(高风险|中风险|低风险|高|中|低|high|medium|low)\s*(?:违规|违法|事项|行为|问题|风险)?",
         ]
         for pattern in patterns:
             match = re.search(pattern, text, flags=re.IGNORECASE)
             if match:
                 return self._normalize_risk_level(match.group(1))
+        fallback_positions: list[tuple[int, str]] = []
+        for label, normalized in (
+            ("高风险", "high"),
+            ("中风险", "medium"),
+            ("低风险", "low"),
+            ("high risk", "high"),
+            ("medium risk", "medium"),
+            ("low risk", "low"),
+        ):
+            index = text.lower().find(label)
+            if index >= 0:
+                fallback_positions.append((index, normalized))
+        if fallback_positions:
+            return min(fallback_positions, key=lambda item: item[0])[1]
         return None
 
     def _normalize_risk_level(self, value: str) -> Optional[str]:

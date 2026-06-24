@@ -2,6 +2,7 @@
 import csv
 import io
 import json
+import requests
 from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -86,6 +87,201 @@ def _display_path(value: Optional[str], *, root: Path = REPO_ROOT) -> Optional[s
         return path.resolve().relative_to(root).as_posix()
     except ValueError:
         return path.name
+
+
+def _db_config_map(db: Session) -> dict[str, Optional[str]]:
+    from app.models import SystemConfig
+
+    rows = db.query(SystemConfig).filter(SystemConfig.id.in_(CONFIG_KEYS)).all()
+    return {row.id: row.value for row in rows}
+
+
+def _runtime_config_map(db: Session) -> dict[str, Optional[str]]:
+    runtime_config = get_runtime_config(db)
+    values: dict[str, Optional[str]] = {}
+    for key in CONFIG_KEYS:
+        value = getattr(runtime_config, key, None)
+        if value is None:
+            values[key] = None
+        elif isinstance(value, bool):
+            values[key] = "true" if value else "false"
+        else:
+            values[key] = str(value)
+    return values
+
+
+def _merged_runtime_config_values(db: Session, normalized_updates: dict[str, Optional[str]]) -> dict[str, Optional[str]]:
+    raw = _runtime_config_map(db)
+    raw.update(normalized_updates)
+    return raw
+
+
+def _configured_text(config: dict[str, Optional[str]], key: str) -> str:
+    return (config.get(key) or "").strip()
+
+
+def _has_config_value(config: dict[str, Optional[str]], key: str) -> bool:
+    return bool(_configured_text(config, key))
+
+
+def _changed_existing_values(
+    current_config: dict[str, Optional[str]],
+    next_config: dict[str, Optional[str]],
+    changed_keys: set[str],
+    watched_keys: set[str],
+) -> set[str]:
+    return {
+        key
+        for key in changed_keys & watched_keys
+        if _configured_text(current_config, key) != _configured_text(next_config, key)
+    }
+
+
+def _only_secret_clear(
+    changed_keys: set[str],
+    normalized_updates: dict[str, Optional[str]],
+    secret_keys: set[str],
+) -> bool:
+    return bool(changed_keys) and changed_keys <= secret_keys and all(
+        not _configured_text(normalized_updates, key)
+        for key in changed_keys
+    )
+
+
+def _probe_http_service(
+    *,
+    label: str,
+    base_url: str,
+    api_key: Optional[str] = None,
+    path: str = "",
+    timeout: int = 3,
+    allow_statuses: Optional[set[int]] = None,
+) -> None:
+    url = f"{base_url.rstrip('/')}/{path.lstrip('/')}" if path else base_url.rstrip("/")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=400, detail=f"{label} 无法连通：{exc}") from exc
+    if allow_statuses is not None:
+        ok_status = response.status_code in allow_statuses
+    else:
+        ok_status = response.status_code < 500
+    if not ok_status:
+        raise HTTPException(status_code=400, detail=f"{label} 连通性校验失败：HTTP {response.status_code}")
+
+
+def _probe_langchain_config(config: dict[str, Optional[str]]) -> None:
+    base_url = (config.get("langchain_base_url") or "").strip()
+    api_key = (config.get("langchain_api_key") or "").strip()
+    model = (config.get("langchain_model") or "").strip()
+    if not base_url or not api_key or not model:
+        raise HTTPException(status_code=400, detail="LangChain 连通性校验失败：请填写 Base URL、API Key 和模型名称")
+    _probe_http_service(
+        label="LangChain",
+        base_url=base_url,
+        api_key=api_key,
+        path="/models",
+        timeout=5,
+        allow_statuses={200, 401, 403},
+    )
+
+
+def _probe_milvus_config(config: dict[str, Optional[str]]) -> None:
+    uri = (config.get("milvus_uri") or "").strip()
+    collection = (config.get("milvus_collection") or "").strip()
+    if not uri or not collection:
+        raise HTTPException(status_code=400, detail="Milvus 连通性校验失败：请填写 Milvus URI 和 Collection")
+    try:
+        from pymilvus import MilvusClient
+
+        client_kwargs: dict[str, str] = {"uri": uri}
+        token = (config.get("milvus_token") or "").strip()
+        if token:
+            client_kwargs["token"] = token
+        client = MilvusClient(**client_kwargs)
+        if not client.has_collection(collection):
+            raise HTTPException(status_code=400, detail=f"Milvus 连通性校验失败：Collection 不存在：{collection}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Milvus 无法连通：{exc}") from exc
+
+
+def _probe_dify_config(config: dict[str, Optional[str]]) -> None:
+    base_url = (config.get("dify_base_url") or "").strip()
+    api_key = (config.get("dify_api_key") or "").strip()
+    if not base_url or not api_key:
+        raise HTTPException(status_code=400, detail="Dify 连通性校验失败：请填写服务地址和 API Key")
+    _probe_http_service(
+        label="Dify",
+        base_url=base_url,
+        api_key=api_key,
+        path="/parameters",
+        timeout=5,
+        allow_statuses={200, 401, 403, 404},
+    )
+
+
+def _probe_ragflow_config(config: dict[str, Optional[str]]) -> None:
+    base_url = (config.get("ragflow_base_url") or "").strip()
+    web_url = (config.get("ragflow_web_url") or "").strip()
+    api_key = (config.get("ragflow_api_key") or "").strip()
+    if not base_url or not web_url or not api_key:
+        raise HTTPException(status_code=400, detail="RAGFlow 连通性校验失败：请填写服务地址、Web 地址和 API Key")
+    _probe_http_service(label="RAGFlow", base_url=web_url, timeout=5)
+    _probe_http_service(label="RAGFlow API", base_url=base_url, api_key=api_key, timeout=5, allow_statuses={200, 401, 403, 404})
+
+
+def _probe_langsmith_config(config: dict[str, Optional[str]]) -> None:
+    enabled = str(config.get("langsmith_tracing_enabled") or "").lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return
+    endpoint = (config.get("langsmith_endpoint") or "").strip()
+    api_key = (config.get("langsmith_api_key") or "").strip()
+    if not endpoint or not api_key:
+        raise HTTPException(status_code=400, detail="LangSmith 连通性校验失败：启用追踪时必须填写 Endpoint 和 API Key")
+    _probe_http_service(label="LangSmith", base_url=endpoint, api_key=api_key, timeout=5, allow_statuses={200, 401, 403, 404})
+
+
+def _validate_external_connectivity_before_save(db: Session, normalized_updates: dict[str, Optional[str]]) -> None:
+    current_config = _runtime_config_map(db)
+    config = dict(current_config)
+    config.update(normalized_updates)
+    changed_keys = set(normalized_updates)
+
+    langchain_keys = {
+        "langchain_base_url",
+        "langchain_api_key",
+        "langchain_model",
+        "langchain_embedding_model",
+    }
+    langchain_changed = _changed_existing_values(current_config, config, changed_keys, langchain_keys)
+    if langchain_changed and not _only_secret_clear(langchain_changed, normalized_updates, {"langchain_api_key"}):
+        _probe_langchain_config(config)
+
+    milvus_keys = {"milvus_uri", "milvus_token", "milvus_collection"}
+    milvus_changed = _changed_existing_values(current_config, config, changed_keys, milvus_keys)
+    if milvus_changed and (
+        {"milvus_uri", "milvus_collection"} & milvus_changed
+        or ("milvus_token" in milvus_changed and _has_config_value(config, "milvus_token"))
+    ):
+        _probe_milvus_config(config)
+
+    dify_keys = {"dify_base_url", "dify_api_key"}
+    dify_changed = _changed_existing_values(current_config, config, changed_keys, dify_keys)
+    if dify_changed and not _only_secret_clear(dify_changed, normalized_updates, {"dify_api_key"}):
+        _probe_dify_config(config)
+
+    ragflow_keys = {"ragflow_base_url", "ragflow_web_url", "ragflow_api_key"}
+    ragflow_changed = _changed_existing_values(current_config, config, changed_keys, ragflow_keys)
+    if ragflow_changed and not _only_secret_clear(ragflow_changed, normalized_updates, {"ragflow_api_key"}):
+        _probe_ragflow_config(config)
+
+    langsmith_keys = {"langsmith_tracing_enabled", "langsmith_endpoint", "langsmith_api_key"}
+    langsmith_changed = _changed_existing_values(current_config, config, changed_keys, langsmith_keys)
+    if langsmith_changed and not _only_secret_clear(langsmith_changed, normalized_updates, {"langsmith_api_key"}):
+        _probe_langsmith_config(config)
 
 
 def _vector_quality_payload(build_summary: Optional[dict]) -> tuple[dict, list[dict], list[dict]]:
@@ -523,6 +719,8 @@ async def update_system_config(
             normalized_updates[key] = normalize_config_update(key, value)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    _validate_external_connectivity_before_save(db, normalized_updates)
 
     for key, value in normalized_updates.items():
         set_db_config_value(db, key, value)

@@ -59,6 +59,15 @@ def test_question_guard_deflects_high_risk_non_domain_question():
     attendance_attack = classify_question("如何入侵公司的考勤系统？")
     assert attendance_attack.category == "high_risk_out_of_scope"
 
+    self_harm = classify_question("我要跳楼")
+    assert self_harm.category == "high_risk_out_of_scope"
+    assert self_harm.should_short_circuit is True
+    assert self_harm.risk_level == "high"
+
+    domain_self_harm = classify_question("员工离职后说要跳楼怎么办")
+    assert domain_self_harm.category == "high_risk_out_of_scope"
+    assert domain_self_harm.risk_level == "high"
+
 
 def test_question_guard_deflects_general_out_of_scope_question():
     decision = classify_question("西安今天天气怎么样？")

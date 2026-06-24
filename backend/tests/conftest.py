@@ -30,6 +30,8 @@ os.environ.setdefault("AUTO_SEED", "true")
 os.environ.setdefault("DIFY_API_KEY", "")
 os.environ.setdefault("LANGCHAIN_API_KEY", "")
 os.environ.setdefault("RAGFLOW_API_KEY", "")
+os.environ.setdefault("LOCAL_EMBEDDING_ENABLED", "false")
+os.environ.setdefault("LOCAL_RERANKER_ENABLED", "false")
 os.environ.setdefault("RATE_LIMIT_MAX_REQUESTS", "10000")
 os.environ.setdefault("MAX_REQUEST_BYTES", "8192")
 os.environ.setdefault("MAX_UPLOAD_BYTES", "65536")
@@ -70,6 +72,8 @@ def api_base_url():
             "DIFY_API_KEY": "",
             "LANGCHAIN_API_KEY": "",
             "RAGFLOW_API_KEY": "",
+            "LOCAL_EMBEDDING_ENABLED": "false",
+            "LOCAL_RERANKER_ENABLED": "false",
             "RATE_LIMIT_MAX_REQUESTS": "10000",
             "MAX_REQUEST_BYTES": "8192",
             "MAX_UPLOAD_BYTES": "65536",

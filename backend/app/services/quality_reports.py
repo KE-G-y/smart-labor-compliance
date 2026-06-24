@@ -92,7 +92,61 @@ def _latency_dimension(response_time_ms: Optional[int]) -> QualityDimension:
     return QualityDimension("latency", "问答耗时", 45, 0.06, False, f"完整接口耗时 {response_time_ms}ms")
 
 
-def _latency_recommendations(response_time_ms: Optional[int], provider: str) -> list[str]:
+def _clean_trace_metrics(trace_metrics: Optional[dict]) -> dict:
+    if not trace_metrics:
+        return {}
+    cleaned = {}
+    for key, value in trace_metrics.items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            cleaned[key] = value
+        elif isinstance(value, (int, float)):
+            cleaned[key] = int(value)
+        else:
+            cleaned[key] = str(value)[:200]
+    return cleaned
+
+
+def _trace_int(trace_metrics: dict, key: str) -> int:
+    value = trace_metrics.get(key)
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _answer_metrics(
+    *,
+    answer_characters: int,
+    source_count: int,
+    faq_source_count: int,
+    document_source_count: int,
+    provider: str,
+    risk_level: str,
+    response_time_ms: Optional[int],
+    trace_metrics: Optional[dict],
+) -> dict:
+    metrics = {
+        "answer_characters": answer_characters,
+        "source_count": source_count,
+        "faq_source_count": faq_source_count,
+        "document_source_count": document_source_count,
+        "provider": provider,
+        "risk_level": risk_level,
+        "response_time_ms": response_time_ms,
+    }
+    trace = _clean_trace_metrics(trace_metrics)
+    if trace:
+        metrics["trace"] = trace
+    return metrics
+
+
+def _latency_recommendations(response_time_ms: Optional[int], provider: str, trace_metrics: Optional[dict] = None) -> list[str]:
     if response_time_ms is None:
         return []
     if response_time_ms <= 10000:
@@ -100,6 +154,25 @@ def _latency_recommendations(response_time_ms: Optional[int], provider: str) -> 
     if provider == "dify":
         return ["本次 Dify 链路耗时偏高，建议检查 Dify 工作流节点、外部知识库检索和 `DIFY_TIMEOUT_SECONDS`。"]
     if provider == "langchain":
+        trace = _clean_trace_metrics(trace_metrics)
+        recommendations = []
+        vector_ms = _trace_int(trace, "vector_search_ms")
+        model_ms = _trace_int(trace, "langchain_model_ms")
+        source_context_chars = _trace_int(trace, "source_context_chars")
+        if vector_ms >= 3000:
+            recommendations.append(
+                f"Milvus 检索耗时约 {vector_ms}ms，建议降低 `vector_top_k`、评估 `local_reranker_enabled`，并确认本次请求复用同一次检索结果。"
+            )
+        if model_ms >= 7000:
+            recommendations.append(
+                f"模型生成耗时约 {model_ms}ms，建议检查 `LANGCHAIN_BASE_URL`、模型服务 P95 响应和 `LANGCHAIN_TIMEOUT_SECONDS`。"
+            )
+        if source_context_chars >= 1800:
+            recommendations.append(
+                f"Prompt 来源上下文约 {source_context_chars} 字符，建议压缩来源摘要、限制同一文档重复 chunk。"
+            )
+        if recommendations:
+            return recommendations[:3]
         return ["本次 LangChain 链路耗时偏高，建议检查 Milvus TopK、rerank 开关、Prompt 长度和模型服务响应。"]
     return ["本次问答耗时偏高，建议在后台日志按 provider、风险等级和问题长度分组排查慢请求。"]
 
@@ -113,6 +186,7 @@ def build_answer_quality_report(
     risk_level: str,
     fallback_reason: Optional[str] = None,
     response_time_ms: Optional[int] = None,
+    trace_metrics: Optional[dict] = None,
 ) -> QualityReport:
     """生成回答质量报告。
 
@@ -127,7 +201,7 @@ def build_answer_quality_report(
     findings: list[str] = []
     recommendations: list[str] = []
     latency_dimension = _latency_dimension(response_time_ms)
-    latency_recommendations = _latency_recommendations(response_time_ms, provider)
+    latency_recommendations = _latency_recommendations(response_time_ms, provider, trace_metrics)
     if provider == "precheck":
         # precheck 表示问题在模型调用前就被规则处理，例如问候或能力说明。
         dimensions = [
@@ -146,15 +220,16 @@ def build_answer_quality_report(
             dimensions=dimensions,
             findings=["问题已由前置规则处理，未触发知识库检索或模型调用。"],
             recommendations=(["请继续输入劳动用工、社保、医保、假期、工资或劳动争议等合规问题。"] + latency_recommendations)[:6],
-            metrics={
-                "answer_characters": len(normalized),
-                "source_count": 0,
-                "faq_source_count": 0,
-                "document_source_count": 0,
-                "provider": provider,
-                "risk_level": risk_level,
-                "response_time_ms": response_time_ms,
-            },
+            metrics=_answer_metrics(
+                answer_characters=len(normalized),
+                source_count=0,
+                faq_source_count=0,
+                document_source_count=0,
+                provider=provider,
+                risk_level=risk_level,
+                response_time_ms=response_time_ms,
+                trace_metrics=trace_metrics,
+            ),
         )
 
     if provider == "kb_no_match":
@@ -178,15 +253,16 @@ def build_answer_quality_report(
             dimensions=dimensions,
             findings=["系统内问题未命中可用知识库证据，已按知识库边界策略停止生成。"],
             recommendations=(["请补充地区、员工身份、时间节点等事实，或先上传并审核相关政策、企业制度、FAQ 后重试。"] + latency_recommendations)[:6],
-            metrics={
-                "answer_characters": len(normalized),
-                "source_count": len(source_items),
-                "faq_source_count": faq_source_count,
-                "document_source_count": document_source_count,
-                "provider": provider,
-                "risk_level": risk_level,
-                "response_time_ms": response_time_ms,
-            },
+            metrics=_answer_metrics(
+                answer_characters=len(normalized),
+                source_count=len(source_items),
+                faq_source_count=faq_source_count,
+                document_source_count=document_source_count,
+                provider=provider,
+                risk_level=risk_level,
+                response_time_ms=response_time_ms,
+                trace_metrics=trace_metrics,
+            ),
         )
 
     source_score, source_detail, source_passed = _source_coverage_score(source_items)
@@ -261,15 +337,16 @@ def build_answer_quality_report(
         dimensions=dimensions,
         findings=findings[:6],
         recommendations=recommendations[:6],
-        metrics={
-            "answer_characters": length,
-            "source_count": len(source_items),
-            "faq_source_count": faq_source_count,
-            "document_source_count": document_source_count,
-            "provider": provider,
-            "risk_level": risk_level,
-            "response_time_ms": response_time_ms,
-        },
+        metrics=_answer_metrics(
+            answer_characters=length,
+            source_count=len(source_items),
+            faq_source_count=faq_source_count,
+            document_source_count=document_source_count,
+            provider=provider,
+            risk_level=risk_level,
+            response_time_ms=response_time_ms,
+            trace_metrics=trace_metrics,
+        ),
     )
 
 

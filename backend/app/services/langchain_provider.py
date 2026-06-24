@@ -97,6 +97,7 @@ class LangChainComplianceProvider:
                 "model": self.model,
                 "temperature": self.temperature,
                 "timeout": self.timeout_seconds,
+                "max_tokens": 700,
             }
             if self.base_url:
                 llm_kwargs["base_url"] = self.base_url
@@ -114,8 +115,11 @@ class LangChainComplianceProvider:
                                 "你需要面向企业 HR、法务、行政或员工，给出谨慎、可复核的中文合规建议。",
                                 "必须优先使用提供的 FAQ、来源目录和租户上下文；不要编造法规条文、金额、期限或办理入口。",
                                 "只能依据可用知识上下文回答；如果上下文没有明确依据，必须说明知识库未命中，不能补充外部常识。",
+                                "必须紧扣用户问题作答；如果知识上下文主题与用户问题不一致，不得迁就上下文生成其他主题答案。",
+                                "当来源看起来跑题或证据不足时，只输出“知识库未命中足够相关依据”和待核验项。",
                                 "如果来源不足，要明确写出待核验项，并建议通过当地人社、医保、税务等官方渠道复核。",
                                 "回答必须结论先行，包含风险等级（high/medium/low 或 高/中/低）、依据说明、行动建议和待核验项。",
+                                "回答控制在 650 个中文字符以内，避免复述长篇法规原文。",
                                 "不得输出身份证号、手机号、银行卡号等敏感信息；如用户提供了敏感信息，只描述已脱敏信息。",
                                 "免责声明：{disclaimer}",
                             ]
@@ -140,6 +144,8 @@ class LangChainComplianceProvider:
                                 "",
                                 "用户问题：",
                                 "{question}",
+                                "",
+                                "请先判断可用知识上下文是否与用户问题同题，再给出答案。",
                             ]
                         ),
                     ),

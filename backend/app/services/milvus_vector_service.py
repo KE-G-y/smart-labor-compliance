@@ -35,6 +35,9 @@ HYBRID_SEARCH_PARAMS = [
     {"metric_type": "BM25", "params": {}},
 ]
 DENSE_SEARCH_PARAMS = {"metric_type": "L2", "params": {"ef": 64}}
+SPARSE_SEARCH_PARAMS = {"metric_type": "BM25", "params": {}}
+RERANK_CANDIDATE_MULTIPLIER = 3
+MAX_RERANK_CANDIDATES = 16
 GENERATED_VECTOR_SECTION_HEADINGS = {
     "来源元数据",
     "元数据",
@@ -45,6 +48,50 @@ GENERATED_VECTOR_SECTION_HEADINGS = {
     "本地资料位置",
 }
 GENERATED_VECTOR_LINE_PREFIXES = ("来源URL", "抓取日期", "页面标题")
+RETRIEVAL_STOP_TERMS = {
+    "怎么办",
+    "怎么",
+    "么办",
+    "如何",
+    "什么",
+    "是否",
+    "可以",
+    "需要",
+    "处理",
+    "问题",
+    "咨询",
+    "政策",
+    "员工",
+    "企业",
+    "公司",
+    "陕西",
+    "西安",
+    "陕西省",
+    "西安市",
+}
+QUERY_EXPANSION_RULES = (
+    (
+        ("违规辞退", "违法辞退", "被辞退", "辞退", "开除", "解雇", "违法解除", "违规解除"),
+        "违法解除劳动合同 解除或者终止劳动合同 经济补偿 赔偿金 劳动合同法 第四十七条 第八十七条 劳动争议仲裁",
+    ),
+    (
+        ("裁员", "经济性裁员"),
+        "经济性裁员 解除劳动合同 经济补偿 劳动合同法 裁减人员",
+    ),
+    (
+        ("社保减员", "补缴", "社保补缴", "离职社保"),
+        "社会保险 社保减员 社保补缴 参保 经办机构 滞纳金 离职",
+    ),
+    (
+        ("劳动仲裁", "仲裁", "争议"),
+        "劳动争议调解仲裁 仲裁申请 仲裁时效 劳动争议仲裁委员会",
+    ),
+    (
+        ("试用期", "最低工资"),
+        "试用期工资 最低工资 劳动合同法 第十九条 第二十条",
+    ),
+)
+MAX_SEARCH_QUERY_CHARS = 260
 
 SUPPORTED_VECTOR_EXTENSIONS = {
     ".txt",
@@ -417,10 +464,16 @@ class MilvusVectorService:
             return []
         top_k = self.runtime_config.vector_top_k
         expr = f'metadata["tenant_id"] == {int(tenant_id)}'
+        expanded_query = _expand_query_for_search(query)
         documents = self._hybrid_search(query, top_k=top_k, expr=expr)
+        documents = self._filter_relevant_documents(query, expanded_query, documents, top_k=self._search_k(top_k))
+        if not documents:
+            documents = self._sparse_search(expanded_query, top_k=top_k, expr=expr, tenant_id=tenant_id, tenant_code=tenant_code)
+            documents = self._filter_relevant_documents(query, expanded_query, documents, top_k=self._search_k(top_k))
         if not documents:
             documents = self._dense_search(query, top_k=top_k, expr=expr, tenant_id=tenant_id, tenant_code=tenant_code)
-        documents = self._merge_keyword_signal(query, documents, top_k=self._search_k(top_k))
+            documents = self._filter_relevant_documents(query, expanded_query, documents, top_k=self._search_k(top_k))
+        documents = self._merge_keyword_signal(expanded_query, documents, top_k=self._search_k(top_k))
         documents = self._rerank_documents(query, documents, top_k=top_k)
         return [self._source_info_from_document(item) for item in documents[:top_k]]
 
@@ -439,26 +492,116 @@ class MilvusVectorService:
             )
             return [document for document, _score in results]
         except Exception as exc:
-            logger.warning("Milvus hybrid search unavailable; falling back to dense search. error=%s", exc)
+            logger.warning("Milvus hybrid search unavailable; falling back to direct search. error=%s", exc)
+            return []
+
+    def _sparse_search(self, query: str, *, top_k: int, expr: str, tenant_id: int, tenant_code: str) -> list:
+        """优先使用 Milvus 内置 BM25 稀疏检索，避免问答时触发本地 Embedding 冷启动。"""
+        try:
+            from pymilvus import MilvusClient
+        except ImportError as exc:
+            logger.warning("Milvus sparse direct search dependency unavailable. error=%s", exc)
+            return []
+
+        client_kwargs = {"uri": self.runtime_config.milvus_uri}
+        if self.runtime_config.milvus_token:
+            client_kwargs["token"] = self.runtime_config.milvus_token
+        client = MilvusClient(**client_kwargs)
+        timeout = self._search_timeout()
+
+        try:
+            results = client.search(
+                collection_name=self.runtime_config.milvus_collection,
+                data=[query],
+                anns_field="sparse",
+                search_params=SPARSE_SEARCH_PARAMS,
+                limit=self._search_k(top_k),
+                filter=expr,
+                output_fields=["text", "metadata"],
+                timeout=timeout,
+            )
+            return self._documents_from_hits(results, tenant_id=tenant_id, tenant_code=tenant_code)
+        except Exception as exc:
+            logger.warning("Milvus direct sparse search failed; falling back to dense search. error=%s", exc)
             return []
 
     def _dense_search(self, query: str, *, top_k: int, expr: str, tenant_id: int, tenant_code: str) -> list:
-        for dense_field in ("dense", None):
-            store = self._vector_store(prefer_hybrid=False, dense_field=dense_field)
+        try:
+            from pymilvus import MilvusClient
+        except ImportError as exc:
+            logger.warning("Milvus dense direct search dependencies unavailable. error=%s", exc)
+            return []
+
+        try:
+            query_vector = self._embeddings().embed_query(query)
+        except Exception as exc:
+            logger.warning("Dense query embedding failed. error=%s", exc)
+            return []
+
+        client_kwargs = {"uri": self.runtime_config.milvus_uri}
+        if self.runtime_config.milvus_token:
+            client_kwargs["token"] = self.runtime_config.milvus_token
+        client = MilvusClient(**client_kwargs)
+        timeout = self._search_timeout()
+
+        for vector_field in ("dense", "vector"):
             try:
-                return store.similarity_search(query, k=self._search_k(top_k), param=DENSE_SEARCH_PARAMS, expr=expr)
+                results = client.search(
+                    collection_name=self.runtime_config.milvus_collection,
+                    data=[query_vector],
+                    anns_field=vector_field,
+                    search_params=DENSE_SEARCH_PARAMS,
+                    limit=self._search_k(top_k),
+                    filter=expr,
+                    output_fields=["text", "metadata"],
+                    timeout=timeout,
+                )
+                return self._documents_from_hits(results, tenant_id=tenant_id, tenant_code=tenant_code)
             except Exception as exc:
-                logger.warning("Milvus tenant-scoped dense search failed; retrying with local filter. field=%s error=%s", dense_field or "vector", exc)
-                try:
-                    documents = store.similarity_search(query, k=self._search_k(top_k), param=DENSE_SEARCH_PARAMS)
-                    return [
-                        item
-                        for item in documents
-                        if item.metadata.get("tenant_id") == tenant_id or item.metadata.get("tenant_code") == tenant_code
-                    ]
-                except Exception as fallback_exc:
-                    logger.warning("Milvus dense fallback failed. field=%s error=%s", dense_field or "vector", fallback_exc)
+                logger.warning("Milvus direct dense search failed. field=%s error=%s", vector_field, exc)
         return []
+
+    def _search_timeout(self) -> float:
+        return max(2.0, min(float(getattr(self.runtime_config, "langchain_timeout_seconds", 6) or 6), 8.0))
+
+    def _documents_from_hits(self, results: list, *, tenant_id: int, tenant_code: str) -> list:
+        try:
+            from langchain_core.documents import Document
+        except ImportError as exc:
+            logger.warning("Milvus search result dependency unavailable. error=%s", exc)
+            return []
+
+        documents = []
+        for hit in results[0] if results else []:
+            entity = hit.get("entity", {}) if isinstance(hit, dict) else {}
+            metadata = entity.get("metadata") or {}
+            if not self._metadata_matches_tenant(metadata, tenant_id=tenant_id, tenant_code=tenant_code):
+                continue
+            documents.append(Document(page_content=entity.get("text") or "", metadata=metadata))
+        return documents
+
+    def _metadata_matches_tenant(self, metadata: dict, *, tenant_id: int, tenant_code: str) -> bool:
+        metadata_tenant_id = metadata.get("tenant_id")
+        metadata_tenant_code = metadata.get("tenant_code")
+        return str(metadata_tenant_id or "") == str(tenant_id) or str(metadata_tenant_code or "") == str(tenant_code)
+
+    def _filter_relevant_documents(self, query: str, expanded_query: str, documents: list, *, top_k: int) -> list:
+        if not documents:
+            return []
+        terms = _meaningful_query_terms(f"{query} {expanded_query}")
+        if not terms:
+            return documents[:top_k]
+        scored = []
+        for index, document in enumerate(documents):
+            score = _document_keyword_score(document, terms)
+            scored.append((score, -index, document))
+        max_score = max(score for score, _index, _document in scored)
+        if max_score <= 0:
+            return []
+        min_score = 2 if len(terms) >= 8 and max_score >= 2 else 1
+        filtered = [item for item in scored if item[0] >= min_score]
+        filtered.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [document for _score, _index, document in filtered[:top_k]]
 
     def _merge_keyword_signal(self, query: str, documents: list, *, top_k: int) -> list:
         if len(documents) <= 1:
@@ -503,7 +646,7 @@ class MilvusVectorService:
 
     def _search_k(self, top_k: int) -> int:
         if local_reranker_enabled(self.runtime_config):
-            return max(top_k * 4, top_k)
+            return max(top_k, min(top_k * RERANK_CANDIDATE_MULTIPLIER, MAX_RERANK_CANDIDATES))
         return top_k
 
     def _rerank_documents(self, query: str, documents: list, *, top_k: int) -> list:
@@ -637,16 +780,63 @@ def _hybrid_store_kwargs() -> dict:
 
 def _tokenize_for_keyword_score(text: str) -> list[str]:
     cleaned = (sanitize_text(text) or "").lower()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
     terms = re.findall(r"[a-z0-9_\-]{2,}|[\u4e00-\u9fff]{2,}", cleaned)
     short_terms = re.findall(r"[\u4e00-\u9fff]", cleaned)
     terms.extend("".join(short_terms[index:index + 2]) for index in range(max(len(short_terms) - 1, 0)))
     seen = set()
     result = []
     for term in terms:
+        if term in RETRIEVAL_STOP_TERMS:
+            continue
         if term not in seen:
             seen.add(term)
             result.append(term)
-    return result[:32]
+    return result[:40]
+
+
+def _meaningful_query_terms(text: str) -> list[str]:
+    cleaned = (sanitize_text(text) or "").lower()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return []
+    terms = []
+    for term in re.findall(r"[a-z0-9_\-]{2,}|[\u4e00-\u9fff]{2,}", cleaned):
+        if term and term not in RETRIEVAL_STOP_TERMS:
+            terms.append(term)
+    short_terms = re.findall(r"[\u4e00-\u9fff]", cleaned)
+    for term in ("".join(short_terms[index:index + 2]) for index in range(max(len(short_terms) - 1, 0))):
+        if term and term not in RETRIEVAL_STOP_TERMS:
+            terms.append(term)
+    seen = set()
+    result = []
+    for term in terms:
+        if term not in seen:
+            seen.add(term)
+            result.append(term)
+    return result[:48]
+
+
+def _expand_query_for_search(query: str) -> str:
+    cleaned = (sanitize_text(query) or "").strip()
+    if not cleaned:
+        return ""
+    parts = [cleaned]
+    lowered = cleaned.lower()
+    for triggers, expansion in QUERY_EXPANSION_RULES:
+        if any(trigger in cleaned or trigger in lowered for trigger in triggers):
+            parts.append(expansion)
+    combined = " ".join(dict.fromkeys(part for part in parts if part))
+    return combined[:MAX_SEARCH_QUERY_CHARS]
+
+
+def _document_keyword_score(document, terms: list[str]) -> int:
+    content = f"{getattr(document, 'page_content', '') or ''} {json.dumps(getattr(document, 'metadata', {}) or {}, ensure_ascii=False)}".lower()
+    score = 0
+    for term in terms:
+        if term and term in content:
+            score += 1
+    return score
 
 
 def _normalize_whitespace(text: str) -> str:

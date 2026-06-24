@@ -188,3 +188,26 @@ def test_answer_quality_report_adds_latency_dimension_and_langchain_recommendati
     assert latency["score"] == 65
     assert latency["passed"] is False
     assert any("LangChain" in item for item in report["recommendations"])
+
+
+def test_answer_quality_report_uses_trace_metrics_for_targeted_latency_advice():
+    report = build_answer_quality_report(
+        question="员工离职后社保什么时候停缴？",
+        answer="风险等级：中\n\n结论：应结合离职时间、工资结算和当地社保经办口径处理。\n\n依据：参考官方来源。\n\n行动建议：HR 复核离职日期、申报周期和缴费状态。\n\n待核验项：以当地经办机构最终口径为准。",
+        sources=[SourceInfo(title="[文档] 西安社保办事规则 #chunk-1", snippet="离职停缴情形摘要", source_type="document")],
+        provider="langchain",
+        risk_level="medium",
+        response_time_ms=12000,
+        trace_metrics={
+            "vector_search_ms": 3400,
+            "langchain_model_ms": 8100,
+            "source_context_chars": 2100,
+        },
+    ).model_dump()
+
+    assert "trace" in report["metrics"]
+    trace = report["metrics"]["trace"]
+    assert trace["vector_search_ms"] == 3400
+    assert trace["langchain_model_ms"] == 8100
+    assert any("Milvus" in item for item in report["recommendations"])
+    assert any("模型生成" in item or "模型服务" in item for item in report["recommendations"])

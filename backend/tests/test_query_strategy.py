@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 import requests
 
-from app.schemas.chat import ChatResponse
+from app.schemas.chat import ChatResponse, SourceInfo
 from app.services.dify_service import ChatAttachment, ComplianceAnswerService, dify_attachment_capability
 from app.services.runtime_config import DEFAULT_QUERY_STRATEGY, normalize_config_update
 
@@ -26,6 +26,8 @@ def _service_with_strategy(strategy: str) -> ComplianceAnswerService:
     )
     service.last_dify_error = None
     service.last_langchain_error = None
+    service.trace_metrics = {}
+    service._vector_source_cache = {}
     return service
 
 
@@ -118,6 +120,60 @@ def test_dify_first_strategy_falls_back_to_langchain(monkeypatch):
 
     assert response.provider == "langchain"
     assert calls == ["dify", "langchain"]
+
+
+def test_vector_source_infos_reuses_request_cache(monkeypatch):
+    service = _service_with_strategy("langchain_first")
+    calls = []
+
+    class FakeVectorService:
+        configured = True
+
+        def __init__(self, runtime_config):
+            self.runtime_config = runtime_config
+
+        def similarity_search(self, question, *, tenant_id, tenant_code):
+            calls.append((question, tenant_id, tenant_code))
+            return [
+                SourceInfo(
+                    title="[FAQ] FAQ002.md",
+                    snippet="试用期工资不得低于最低工资标准。",
+                    source_type="faq",
+                )
+            ]
+
+    monkeypatch.setattr("app.services.dify_service.MilvusVectorService", FakeVectorService)
+
+    first = service._vector_source_infos("试用期工资可以低于最低工资吗？")
+    second = service._vector_source_infos("试用期工资可以低于最低工资吗？")
+
+    assert first == second
+    assert len(calls) == 1
+    assert service.trace_metrics["vector_search_count"] == 1
+    assert service.trace_metrics["vector_search_cache_hits"] == 1
+    assert service.trace_metrics["vector_search_reused"] is True
+
+
+def test_vector_only_boundary_response_reports_vector_provider(monkeypatch):
+    service = _service_with_strategy("vector_only")
+    source = SourceInfo(
+        title="[FAQ] FAQ002.md",
+        snippet="试用期工资不得低于最低工资标准。",
+        content="## 标准答案\n不可以。试用期工资不得低于用人单位所在地最低工资标准。",
+        source_type="faq",
+    )
+    monkeypatch.setattr(service, "_vector_source_infos", lambda question: [source])
+
+    response = service._knowledge_boundary_fallback(
+        "试用期工资可以低于最低工资吗？",
+        "zh-CN",
+        allow_fallback=False,
+    )
+
+    assert response.provider == "vector_only"
+    assert response.fallback_reason is None
+    assert response.sources == [source]
+    assert "当前为低延迟知识库回答" in response.answer
 
 
 def test_langchain_only_attachment_does_not_call_dify(monkeypatch):

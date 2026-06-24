@@ -70,6 +70,8 @@ def _persist_chat_log(
 ) -> ChatResponse:
     if response_time is not None:
         response.response_time = response_time
+    trace_metrics = dict(response.trace_metrics or {})
+    quality_start = time.perf_counter()
     response.evaluation = build_answer_quality_report(
         question=question,
         answer=response.answer,
@@ -78,7 +80,12 @@ def _persist_chat_log(
         risk_level=response.risk_level,
         fallback_reason=response.fallback_reason,
         response_time_ms=response.response_time,
+        trace_metrics=trace_metrics,
     ).model_dump()
+    trace_metrics["quality_report_ms"] = max(0, int((time.perf_counter() - quality_start) * 1000))
+    if response.evaluation:
+        response.evaluation.setdefault("metrics", {})["trace"] = trace_metrics
+    response.trace_metrics = trace_metrics
     chat_log = ChatLog(
         tenant_id=tenant.id,
         user_id=user_id,

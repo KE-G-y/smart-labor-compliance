@@ -256,6 +256,132 @@ def test_index_faq_uses_single_chunk_instead_of_text_splitter():
     assert "metadata[\"document_type\"] == \"faq\"" in captured["delete_expr"]
 
 
+def test_search_k_caps_rerank_candidates():
+    service = MilvusVectorService(
+        SimpleNamespace(
+            local_reranker_enabled=True,
+        )
+    )
+
+    assert service._search_k(1) == 3
+    assert service._search_k(4) == 12
+    assert service._search_k(8) == 16
+    assert service._search_k(12) == 16
+
+
+def test_similarity_search_prefers_sparse_before_dense():
+    service = MilvusVectorService(
+        SimpleNamespace(
+            langchain_api_key="key",
+            langchain_embedding_model="embedding",
+            milvus_uri="http://127.0.0.1:19530",
+            milvus_collection="collection",
+            milvus_token="",
+            vector_search_mode="dense",
+            vector_top_k=3,
+            langchain_timeout_seconds=6,
+            local_embedding_enabled=False,
+            local_reranker_enabled=False,
+        )
+    )
+    calls = []
+    sparse_doc = SimpleNamespace(
+        page_content="## 标准答案\n试用期工资不得低于最低工资标准。",
+        metadata={"tenant_id": 3, "tenant_code": "demo-sx", "document_type": "faq", "filename": "FAQ002.md"},
+    )
+
+    def sparse_search(query, *, top_k, expr, tenant_id, tenant_code):
+        calls.append(("sparse", query, top_k, expr, tenant_id, tenant_code))
+        return [sparse_doc]
+
+    service._sparse_search = sparse_search
+    service._dense_search = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("命中 sparse 时不应继续触发 dense embedding 检索")
+    )
+
+    sources = service.similarity_search("试用期工资可以低于最低工资吗？", tenant_id=3, tenant_code="demo-sx")
+
+    assert calls and calls[0][0] == "sparse"
+    assert 'metadata["tenant_id"] == 3' in calls[0][3]
+    assert len(sources) == 1
+    assert sources[0].source_type == "faq"
+    assert "试用期工资不得低于最低工资标准" in (sources[0].content or "")
+
+
+def test_similarity_search_falls_back_to_dense_when_sparse_misses():
+    service = MilvusVectorService(
+        SimpleNamespace(
+            langchain_api_key="key",
+            langchain_embedding_model="embedding",
+            milvus_uri="http://127.0.0.1:19530",
+            milvus_collection="collection",
+            milvus_token="",
+            vector_search_mode="dense",
+            vector_top_k=3,
+            langchain_timeout_seconds=6,
+            local_embedding_enabled=False,
+            local_reranker_enabled=False,
+        )
+    )
+    calls = []
+    dense_doc = SimpleNamespace(
+        page_content="劳动合同应当在用工之日起一个月内订立书面劳动合同。",
+        metadata={"tenant_id": "3", "tenant_code": "demo-sx", "document_type": "document", "filename": "LAW002.md"},
+    )
+
+    service._sparse_search = lambda *args, **kwargs: calls.append("sparse") or []
+    service._dense_search = lambda *args, **kwargs: calls.append("dense") or [dense_doc]
+
+    sources = service.similarity_search("劳动合同最晚什么时候签？", tenant_id=3, tenant_code="demo-sx")
+
+    assert calls == ["sparse", "dense"]
+    assert len(sources) == 1
+    assert sources[0].source_type == "document"
+    assert "一个月内" in (sources[0].snippet or "")
+
+
+def test_similarity_search_expands_dismissal_query_and_filters_unrelated_how_to():
+    service = MilvusVectorService(
+        SimpleNamespace(
+            langchain_api_key="key",
+            langchain_embedding_model="embedding",
+            milvus_uri="http://127.0.0.1:19530",
+            milvus_collection="collection",
+            milvus_token="",
+            vector_search_mode="dense",
+            vector_top_k=3,
+            langchain_timeout_seconds=6,
+            local_embedding_enabled=False,
+            local_reranker_enabled=False,
+        )
+    )
+    captured = {}
+    unrelated_doc = SimpleNamespace(
+        page_content="工伤职工转诊转院怎么办？由工伤医疗协议机构提出意见。",
+        metadata={"tenant_id": 3, "tenant_code": "demo-sx", "document_type": "faq", "filename": "FAQ025.md"},
+    )
+    dismissal_doc = SimpleNamespace(
+        page_content="违法解除劳动合同的，应结合经济补偿、赔偿金和劳动争议仲裁路径处理。",
+        metadata={"tenant_id": 3, "tenant_code": "demo-sx", "document_type": "document", "filename": "LAW002.md"},
+    )
+
+    def sparse_search(query, *, top_k, expr, tenant_id, tenant_code):
+        captured["query"] = query
+        return [unrelated_doc, dismissal_doc]
+
+    service._sparse_search = sparse_search
+    service._dense_search = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("扩展检索命中解除劳动合同来源后不应继续触发 dense 检索")
+    )
+
+    sources = service.similarity_search("违规辞退怎么办", tenant_id=3, tenant_code="demo-sx")
+
+    assert "违法解除劳动合同" in captured["query"]
+    assert len(sources) == 1
+    assert sources[0].title.startswith("[文档] LAW002")
+    assert "违法解除劳动合同" in (sources[0].content or "")
+
+
 def test_source_info_from_vector_document_distinguishes_faq_and_document():
     service = MilvusVectorService(SimpleNamespace())
 

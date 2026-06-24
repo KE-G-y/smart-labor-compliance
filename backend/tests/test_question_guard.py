@@ -1,4 +1,4 @@
-from app.services.question_guard import classify_question, is_domain_question
+from app.services.question_guard import classify_question, is_data_security_question, is_domain_question
 
 
 def test_question_guard_handles_simple_small_talk_before_retrieval():
@@ -29,6 +29,19 @@ def test_question_guard_keeps_business_question_with_greeting_in_domain_flow():
     assert decision.category == "domain"
     assert decision.should_short_circuit is False
     assert is_domain_question("员工身份证号能否直接进入知识库？") is True
+
+
+def test_question_guard_short_circuits_sensitive_data_knowledge_base_questions():
+    decision = classify_question("员工身份证号 610103199001011234 能否直接进入知识库？")
+
+    assert is_data_security_question("员工身份证号能否直接进入知识库？") is True
+    assert decision.category == "data_security"
+    assert decision.should_short_circuit is True
+    assert decision.provider == "precheck"
+    assert decision.risk_level == "high"
+    assert decision.fallback_reason == "sensitive_data_precheck"
+    assert "不能以原文直接进入知识库" in decision.answer
+    assert "脱敏" in decision.answer
 
 
 def test_question_guard_deflects_high_risk_non_domain_question():

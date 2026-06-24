@@ -6,6 +6,7 @@ import logging
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, Optional, cast
@@ -102,6 +103,30 @@ class ComplianceAnswerService:
         self.runtime_config = get_runtime_config(db)
         self.last_dify_error: Optional[str] = None
         self.last_langchain_error: Optional[str] = None
+        self.trace_metrics: dict[str, Any] = {}
+        self._vector_source_cache: dict[str, list[SourceInfo]] = {}
+
+    def _reset_request_trace(self) -> None:
+        self.trace_metrics = {}
+        self._vector_source_cache = {}
+
+    def _elapsed_trace_ms(self, started_at: float) -> int:
+        return max(0, int((time.perf_counter() - started_at) * 1000))
+
+    def _add_trace_ms(self, key: str, started_at: float) -> None:
+        elapsed = self._elapsed_trace_ms(started_at)
+        current = self.trace_metrics.get(key)
+        self.trace_metrics[key] = int(current or 0) + elapsed
+
+    def _set_trace_metric(self, key: str, value: Any) -> None:
+        if value is not None:
+            self.trace_metrics[key] = value
+
+    def _increment_trace_metric(self, key: str) -> None:
+        self.trace_metrics[key] = int(self.trace_metrics.get(key) or 0) + 1
+
+    def _trace_snapshot(self) -> dict[str, Any]:
+        return dict(self.trace_metrics)
 
     def _get_dify_base_url(self) -> str:
         return self.runtime_config.dify_base_url
@@ -146,6 +171,8 @@ class ComplianceAnswerService:
             known_facts=known_facts,
             verification_focus=verification_focus,
         )
+        trace_metrics = self._trace_snapshot()
+        quality_start = time.perf_counter()
         response.evaluation = build_answer_quality_report(
             question=question,
             answer=response.answer,
@@ -154,7 +181,12 @@ class ComplianceAnswerService:
             risk_level=response.risk_level,
             fallback_reason=response.fallback_reason,
             response_time_ms=response.response_time,
+            trace_metrics=trace_metrics,
         ).model_dump()
+        self._add_trace_ms("quality_report_ms", quality_start)
+        response.trace_metrics = self._trace_snapshot()
+        if response.evaluation:
+            response.evaluation.setdefault("metrics", {})["trace"] = response.trace_metrics
         return response
 
     def _answer_core(
@@ -175,9 +207,11 @@ class ComplianceAnswerService:
         known_facts: Optional[str] = None,
         verification_focus: Optional[str] = None,
     ) -> ChatResponse:
+        self._reset_request_trace()
         question = sanitize_text(question) or ""
         self.last_dify_error = None
         self.last_langchain_error = None
+        self._set_trace_metric("question_characters", len(question))
         context = self._normalize_context(
             answer_style=answer_style,
             user_goal=user_goal,
@@ -186,10 +220,13 @@ class ComplianceAnswerService:
             known_facts=known_facts,
             verification_focus=verification_focus,
         )
+        self._set_trace_metric("context_characters", sum(len(value or "") for value in context.values()))
         start_time = int(time.time() * 1000)
         # 第一道门：问候、感谢、能力询问等简单问题直接返回固定话术；
         # 高风险且系统外的问题也在这里挡住，避免模型自由发挥。
+        precheck_start = time.perf_counter()
         guard_decision = classify_question(question)
+        self._add_trace_ms("precheck_ms", precheck_start)
         if attachment is not None and guard_decision.should_short_circuit and guard_decision.category != "high_risk_out_of_scope":
             guard_decision = QuestionGuardDecision(category="domain", should_short_circuit=False)
         if guard_decision.should_short_circuit:
@@ -204,7 +241,10 @@ class ComplianceAnswerService:
 
         # 知识包相当于“当前租户是否允许使用知识库”的总开关。
         # 停用时不继续调用 Milvus、LangChain 或 Dify，避免误用旧资料。
-        if not self._has_active_package():
+        package_start = time.perf_counter()
+        has_active_package = self._has_active_package()
+        self._add_trace_ms("knowledge_package_ms", package_start)
+        if not has_active_package:
             response = ChatResponse(
                 answer=self._with_context_prefix(
                     self._inactive_package_answer(question),
@@ -243,6 +283,7 @@ class ComplianceAnswerService:
         attempted_langchain = False
         attempted_dify = False
         is_domain_question = guard_decision.category == "domain"
+        self._set_trace_metric("query_strategy", self._query_strategy())
 
         # provider_order 来自后台“查询方案”：LangChain 优先、Dify 优先、
         # 仅 LangChain、仅 Dify，或 vector_only。循环按顺序尝试，可用就返回。
@@ -363,6 +404,22 @@ class ComplianceAnswerService:
     def _set_dify_error(self, message: str) -> None:
         self.last_dify_error = sanitize_text(message) or message
 
+    def _invoke_langchain_with_hard_timeout(
+        self,
+        provider: LangChainComplianceProvider,
+        prompt_context: LangChainPromptContext,
+    ) -> str:
+        timeout_seconds = max(1, min(int(self.runtime_config.langchain_timeout_seconds or 6), 8))
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="langchain-hard-timeout")
+        future = executor.submit(provider.answer, prompt_context)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except FutureTimeoutError as exc:
+            future.cancel()
+            raise LangChainUnavailable(f"LangChain 调用超过硬超时 {timeout_seconds} 秒") from exc
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
     def _call_langchain(
         self,
         question: str,
@@ -374,26 +431,33 @@ class ComplianceAnswerService:
         city: str,
         context: Optional[dict[str, str]] = None,
     ) -> Optional[ChatResponse]:
-        # LangChain 不是自己存知识库，它只负责“把检索到的知识片段放进 Prompt，
-        # 再调用 OpenAI-compatible 模型”。知识片段来自 _build_langchain_source_context。
-        provider = LangChainComplianceProvider(
-            api_key=self.runtime_config.langchain_api_key,
-            model=self.runtime_config.langchain_model,
-            base_url=self.runtime_config.langchain_base_url,
-            temperature=self.runtime_config.langchain_temperature,
-            timeout_seconds=self.runtime_config.langchain_timeout_seconds,
-            langsmith_tracing_enabled=self.runtime_config.langsmith_tracing_enabled,
-            langsmith_endpoint=self.runtime_config.langsmith_endpoint,
-            langsmith_api_key=self.runtime_config.langsmith_api_key,
-            langsmith_project=self.runtime_config.langsmith_project,
-        )
-        if not provider.configured:
-            return None
-
+        langchain_start = time.perf_counter()
         try:
+            # LangChain 不是自己存知识库，它只负责“把检索到的知识片段放进 Prompt，
+            # 再调用 OpenAI-compatible 模型”。知识片段来自 _build_langchain_source_context。
+            provider = LangChainComplianceProvider(
+                api_key=self.runtime_config.langchain_api_key,
+                model=self.runtime_config.langchain_model,
+                base_url=self.runtime_config.langchain_base_url,
+                temperature=self.runtime_config.langchain_temperature,
+                timeout_seconds=self.runtime_config.langchain_timeout_seconds,
+                langsmith_tracing_enabled=self.runtime_config.langsmith_tracing_enabled,
+                langsmith_endpoint=self.runtime_config.langsmith_endpoint,
+                langsmith_api_key=self.runtime_config.langsmith_api_key,
+                langsmith_project=self.runtime_config.langsmith_project,
+            )
+            self._set_trace_metric("langchain_configured", provider.configured)
+            if not provider.configured:
+                return None
+            source_context_start = time.perf_counter()
             source_context, source_infos = self._build_langchain_source_context(question, language)
+            self._add_trace_ms("langchain_source_context_ms", source_context_start)
             # PromptContext 是喂给模板的数据包：问题、租户、地区、用户角色、
             # 回答风格和 Milvus 检索片段都在这里统一整理。
+            context_notes = self._format_context_notes(context)
+            self._set_trace_metric("context_notes_chars", len(context_notes))
+            self._set_trace_metric("source_context_chars", len(source_context))
+            self._set_trace_metric("source_count", len(source_infos))
             prompt_context = LangChainPromptContext(
                 question=question,
                 language=language,
@@ -404,11 +468,18 @@ class ComplianceAnswerService:
                 city=city,
                 user_role=USER_ROLE_LABELS.get(user_role, user_role),
                 answer_style=(context or {}).get("answer_style") or DEFAULT_ANSWER_STYLE,
-                context_notes=self._format_context_notes(context),
+                context_notes=context_notes,
                 source_context=source_context,
                 disclaimer=DISCLAIMER,
             )
-            answer = self._normalize_answer(provider.answer(prompt_context))
+            prompt_context_chars = sum(len(str(value or "")) for value in prompt_context.__dict__.values())
+            self._set_trace_metric("prompt_context_chars", prompt_context_chars)
+            model_start = time.perf_counter()
+            try:
+                raw_answer = self._invoke_langchain_with_hard_timeout(provider, prompt_context)
+            finally:
+                self._add_trace_ms("langchain_model_ms", model_start)
+            answer = self._normalize_answer(raw_answer)
             return ChatResponse(
                 answer=answer,
                 sources=source_infos or None,
@@ -430,6 +501,8 @@ class ComplianceAnswerService:
                 exc,
             )
             return None
+        finally:
+            self._add_trace_ms("langchain_total_ms", langchain_start)
 
     def _guardrail_response(
         self,
@@ -515,6 +588,7 @@ class ComplianceAnswerService:
         context: Optional[dict[str, str]] = None,
         require_sources: bool = False,
     ) -> Optional[ChatResponse]:
+        dify_start = time.perf_counter()
         try:
             # Dify 仍保留为兼容回退：它接收同样的租户/地区/上下文字段，
             # 但具体检索和生成由 Dify 工作流决定。
@@ -604,6 +678,7 @@ class ComplianceAnswerService:
             logger.warning("Dify chat request failed; falling back to knowledge boundary response. error=%s", exc)
             return None
         finally:
+            self._add_trace_ms("dify_total_ms", dify_start)
             if generation_id:
                 self._unregister_generation(generation_id)
 
@@ -799,12 +874,9 @@ class ComplianceAnswerService:
         if not allow_fallback:
             vector_sources = self._vector_source_infos(question)
             if vector_sources:
-                answer = (
-                    "已检索到知识库片段，但当前生成链路不可用，系统暂不能生成可复核的合规结论。\n"
-                    "请稍后重试，或先查看返回的知识库来源片段；管理员可检查 LangChain/Dify 配置和模型服务状态。\n\n"
-                    f"风险等级：{self._estimate_risk(question)}\n"
-                    "待核验项：仅以返回的知识库片段和官方经办口径为准，不使用外部常识补充结论。"
-                )
+                answer = self._vector_only_answer(question, vector_sources)
+                provider = "vector_only"
+                fallback_reason = None
             else:
                 answer = (
                     "当前知识库未检索到足够明确的依据，系统不会基于外部常识或模型猜测生成合规结论。\n"
@@ -812,13 +884,15 @@ class ComplianceAnswerService:
                     f"风险等级：{self._estimate_risk(question)}\n"
                     "待核验项：请以已入库知识库和当地官方经办口径为准。"
                 )
+                provider = "kb_no_match"
+                fallback_reason = "knowledge_base_generation_unavailable"
             return ChatResponse(
                 answer=answer,
                 sources=vector_sources or None,
                 related_tasks=[],
                 response_time=0,
-                provider="kb_no_match",
-                fallback_reason="knowledge_base_generation_unavailable",
+                provider=provider,
+                fallback_reason=fallback_reason,
                 risk_level=self._estimate_risk(question),
                 suggestions=self._suggestions(question),
                 disclaimer=DISCLAIMER,
@@ -835,6 +909,35 @@ class ComplianceAnswerService:
             suggestions=self._suggestions(question),
             disclaimer=DISCLAIMER,
         )
+
+    def _vector_only_answer(self, question: str, sources: list[SourceInfo]) -> str:
+        """用命中的知识库片段直接组成低延迟回答，不调用外部模型。"""
+        primary = sources[0]
+        primary_text = primary.content or primary.snippet or ""
+        standard_answer = self._extract_standard_answer(primary_text)
+        conclusion = standard_answer or primary.snippet or primary_text[:420] or "已命中知识库片段，请查看来源详情。"
+        source_lines = []
+        for index, source in enumerate(sources[:3], start=1):
+            label = "FAQ" if source.source_type == "faq" or source.title.startswith("[FAQ]") else "文档"
+            source_lines.append(f"{index}. {label}：{source.title}")
+        return (
+            "当前为低延迟知识库回答，未调用外部模型。\n\n"
+            f"风险等级：{self._estimate_risk(question)}\n\n"
+            f"结论：{conclusion.strip()}\n\n"
+            "依据：\n"
+            f"{chr(10).join(source_lines)}\n\n"
+            "行动建议：请结合员工身份、实际工作地、合同约定和企业制度版本复核；涉及金额、期限或争议处理时，以当地人社、医保、税务等官方经办口径为准。\n\n"
+            "待核验项：仅依据已返回的知识库来源片段，不补充外部常识。"
+        )
+
+    def _extract_standard_answer(self, text: str) -> str:
+        if not text:
+            return ""
+        match = re.search(r"##\s*标准答案\s*(.+?)(?:\n##\s+|\Z)", text, flags=re.S)
+        if not match:
+            return ""
+        answer = re.sub(r"\n{3,}", "\n\n", match.group(1)).strip()
+        return answer[:800]
 
     def _has_knowledge_evidence(self, question: str, language: str) -> bool:
         """判断系统内问题是否能在 Milvus 找到证据。"""
@@ -942,7 +1045,7 @@ class ComplianceAnswerService:
                         "\n".join(
                             [
                                 f"Milvus 检索片段 {index}（{self._source_type_label(source)}）：{source.title}",
-                                f"摘要：{source.snippet or '未提供'}",
+                                f"证据摘录：{self._source_evidence_excerpt(source) or '未提供'}",
                             ]
                         )
                         for index, source in enumerate(vector_sources, start=1)
@@ -973,6 +1076,15 @@ class ComplianceAnswerService:
 
         return "\n\n".join(lines), source_infos
 
+    def _source_evidence_excerpt(self, source: SourceInfo) -> str:
+        raw_text = source.content or source.snippet or ""
+        if not raw_text:
+            return ""
+        standard_answer = self._extract_standard_answer(raw_text)
+        excerpt = standard_answer or raw_text
+        excerpt = re.sub(r"\s+", " ", excerpt).strip()
+        return excerpt[:520]
+
     def _source_type_label(self, source: SourceInfo) -> str:
         if source.source_type == "faq" or source.title.startswith("[FAQ]"):
             return "FAQ 标准问答"
@@ -980,21 +1092,35 @@ class ComplianceAnswerService:
 
     def _vector_source_infos(self, question: str) -> list[SourceInfo]:
         """调用 Milvus 做相似度检索，失败时返回空列表让上层走边界提示。"""
+        cache_key = sanitize_text(question) or ""
+        if cache_key in self._vector_source_cache:
+            self._increment_trace_metric("vector_search_cache_hits")
+            self._set_trace_metric("vector_search_reused", True)
+            return self._vector_source_cache[cache_key]
+
         service = MilvusVectorService(self.runtime_config)
         if not service.configured:
+            self._set_trace_metric("vector_store_configured", False)
+            self._vector_source_cache[cache_key] = []
             return []
+        search_start = time.perf_counter()
+        self._increment_trace_metric("vector_search_count")
+        sources: list[SourceInfo] = []
         try:
-            return service.similarity_search(
+            sources = service.similarity_search(
                 question,
                 tenant_id=self.tenant.id,
                 tenant_code=self.tenant.code,
             )
         except VectorStoreUnavailable as exc:
             logger.warning("Milvus vector search unavailable; continuing without vector context. error=%s", exc)
-            return []
         except Exception as exc:
             logger.warning("Milvus vector search failed; continuing without vector context. error=%s", exc)
-            return []
+        finally:
+            self._add_trace_ms("vector_search_ms", search_start)
+        self._set_trace_metric("vector_source_count", len(sources))
+        self._vector_source_cache[cache_key] = sources
+        return sources
 
     def _build_dify_inputs(
         self,

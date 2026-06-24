@@ -870,6 +870,7 @@ async def get_log_detail(
             "related_tasks": log.related_tasks,
             "provider": log.provider,
             "risk_level": log.risk_level,
+            "evaluation": log.evaluation,
             "response_time": log.response_time,
             "status": log.status,
             "created_at": log.created_at,

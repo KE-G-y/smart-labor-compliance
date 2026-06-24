@@ -60,6 +60,15 @@
                 <strong>{{ formatTime(selectedLog.created_at) || '-' }}</strong>
               </div>
             </div>
+            <section v-if="traceMetricEntries.length">
+              <h3>{{ t('traceMetrics') }}</h3>
+              <div class="trace-metrics">
+                <div v-for="metric in traceMetricEntries" :key="metric.key">
+                  <span>{{ metric.label }}</span>
+                  <strong>{{ metric.value }}</strong>
+                </div>
+              </div>
+            </section>
             <section>
               <h3>{{ t('question') }}</h3>
               <p class="preline">{{ selectedLog.question }}</p>
@@ -134,6 +143,48 @@ const logColumns = computed(() => [
   { key: 'action', label: t('action'), width: '112px' }
 ])
 const sourceList = computed(() => groupSources(selectedLog.value?.sources || []))
+const traceMetrics = computed(() => selectedLog.value?.evaluation?.metrics?.trace || {})
+const traceMetricOrder = [
+  'query_strategy',
+  'precheck_ms',
+  'knowledge_package_ms',
+  'vector_search_ms',
+  'vector_search_count',
+  'vector_search_cache_hits',
+  'vector_search_reused',
+  'vector_source_count',
+  'langchain_source_context_ms',
+  'source_context_chars',
+  'prompt_context_chars',
+  'langchain_model_ms',
+  'langchain_total_ms',
+  'dify_total_ms',
+  'quality_report_ms'
+]
+const traceMetricLabels = computed(() => ({
+  query_strategy: t('traceMetricQueryStrategy'),
+  precheck_ms: t('traceMetricPrecheck'),
+  knowledge_package_ms: t('traceMetricKnowledgePackage'),
+  vector_search_ms: t('traceMetricVectorSearch'),
+  vector_search_count: t('traceMetricVectorSearchCount'),
+  vector_search_cache_hits: t('traceMetricVectorCacheHits'),
+  vector_search_reused: t('traceMetricVectorReused'),
+  vector_source_count: t('traceMetricVectorSourceCount'),
+  langchain_source_context_ms: t('traceMetricSourceContext'),
+  source_context_chars: t('traceMetricSourceContextChars'),
+  prompt_context_chars: t('traceMetricPromptChars'),
+  langchain_model_ms: t('traceMetricLangchainModel'),
+  langchain_total_ms: t('traceMetricLangchainTotal'),
+  dify_total_ms: t('traceMetricDifyTotal'),
+  quality_report_ms: t('traceMetricQualityReport')
+}))
+const traceMetricEntries = computed(() => traceMetricOrder
+  .filter((key) => traceMetrics.value[key] !== undefined && traceMetrics.value[key] !== null)
+  .map((key) => ({
+    key,
+    label: traceMetricLabels.value[key] || key,
+    value: formatTraceMetricValue(key, traceMetrics.value[key])
+  })))
 const statusOptions = computed(() => [
   { value: '', label: t('allStatus') },
   { value: 'success', label: t('statusSuccess') },
@@ -156,6 +207,11 @@ const queryLogs = () => {
 }
 const riskClass = (risk) => risk === 'high' ? 'danger' : risk === 'medium' ? 'warning' : 'success'
 const formatTime = (time) => formatDateTime(time)
+const formatTraceMetricValue = (key, value) => {
+  if (typeof value === 'boolean') return value ? t('enable') : t('statusDisabled')
+  if (key.endsWith('_ms') && value !== '') return `${value}ms`
+  return String(value)
+}
 const sourceKey = (source) => [source.document_id || source.local_file || source.title, source.url || '', source.source_type || ''].join('|')
 const sourceListSummary = (source) => {
   const count = Array.isArray(source.chunks) ? source.chunks.length : 0
@@ -199,7 +255,14 @@ onMounted(fetchLogs)
   gap: 10px;
 }
 
-.detail-grid > div {
+.trace-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.detail-grid > div,
+.trace-metrics > div {
   display: grid;
   gap: 4px;
   padding: 10px;
@@ -209,6 +272,7 @@ onMounted(fetchLogs)
 }
 
 .detail-grid span,
+.trace-metrics span,
 .log-sources span {
   color: var(--muted);
 }

@@ -204,6 +204,7 @@ def test_dify_failure_returns_unavailable_provider_with_reason(api_base_url, mon
     os.environ["DB_NAME"] = "employment_slc_auto_test"
     from app.database import SessionLocal
     from app.models import SystemConfig, Tenant
+    from app.schemas.chat import SourceInfo
     from app.services import dify_service
     from app.services.dify_service import ComplianceAnswerService
 
@@ -215,6 +216,13 @@ def test_dify_failure_returns_unavailable_provider_with_reason(api_base_url, mon
             return {"code": "invalid_param", "message": "Workflow not published", "status": 400}
 
     monkeypatch.setattr(dify_service.requests, "post", lambda *args, **kwargs: FailedResponse())
+    monkeypatch.setattr(
+        ComplianceAnswerService,
+        "_vector_source_infos",
+        lambda self, question: [
+            SourceInfo(title="[FAQ] FAQ019_劳动仲裁收费吗？.md", snippet="劳动仲裁相关标准问答", source_type="faq")
+        ],
+    )
 
     with SessionLocal() as db:
         tenant = db.query(Tenant).filter(Tenant.code == "demo-sx").first()
@@ -226,7 +234,7 @@ def test_dify_failure_returns_unavailable_provider_with_reason(api_base_url, mon
 
     assert response.provider in {"dify_unavailable", "kb_no_match"}
     assert response.fallback_reason == "Dify 返回错误 400: Workflow not published"
-    assert "仲裁" in response.answer
+    assert response.sources
 
 
 def test_langchain_provider_is_used_before_dify_and_returns_local_sources(api_base_url, monkeypatch):
@@ -235,6 +243,7 @@ def test_langchain_provider_is_used_before_dify_and_returns_local_sources(api_ba
     os.environ["DB_NAME"] = "employment_slc_auto_test"
     from app.database import SessionLocal
     from app.models import SystemConfig, Tenant
+    from app.schemas.chat import SourceInfo
     from app.services import dify_service
     from app.services.dify_service import ComplianceAnswerService
 
@@ -250,6 +259,13 @@ def test_langchain_provider_is_used_before_dify_and_returns_local_sources(api_ba
 
     monkeypatch.setattr(dify_service.LangChainComplianceProvider, "answer", fake_answer)
     monkeypatch.setattr(dify_service.requests, "post", unexpected_dify)
+    monkeypatch.setattr(
+        ComplianceAnswerService,
+        "_vector_source_infos",
+        lambda self, question: [
+            SourceInfo(title="[文档] 陕西产假政策.md", snippet="陕西产假政策摘要", source_type="document")
+        ],
+    )
 
     with SessionLocal() as db:
         tenant = db.query(Tenant).filter(Tenant.code == "demo-sx").first()

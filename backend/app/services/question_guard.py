@@ -229,6 +229,32 @@ GENERAL_OUT_OF_SCOPE_HINTS: tuple[str, ...] = (
     "房价",
 )
 
+SENSITIVE_DATA_KEYWORDS: tuple[str, ...] = (
+    "身份证",
+    "身份证号",
+    "手机号",
+    "电话",
+    "银行卡",
+    "银行账号",
+    "邮箱",
+    "个人信息",
+    "敏感信息",
+    "客户名单",
+    "合同价格",
+)
+
+DATA_SECURITY_ACTION_KEYWORDS: tuple[str, ...] = (
+    "知识库",
+    "入库",
+    "进入",
+    "上传",
+    "存储",
+    "日志",
+    "脱敏",
+    "隐私",
+    "安全",
+)
+
 PERSON_WORDS: tuple[str, ...] = ("员工", "职工", "劳动者", "用人单位", "公司", "企业")
 BUSINESS_CONTEXT_WORDS: tuple[str, ...] = (
     "入职",
@@ -320,6 +346,13 @@ def is_high_risk_out_of_scope(question: str) -> bool:
     return _contains_any(text.lower(), HIGH_RISK_OUT_OF_SCOPE_KEYWORDS)
 
 
+def is_data_security_question(question: str) -> bool:
+    """Return whether the question is about sensitive data handling in the platform."""
+    text = sanitize_text(question) or ""
+    compact = _compact(text)
+    return _contains_any(compact, SENSITIVE_DATA_KEYWORDS) and _contains_any(compact, DATA_SECURITY_ACTION_KEYWORDS)
+
+
 def _default_suggestions() -> list[str]:
     return [
         "陕西产假多少天？",
@@ -354,6 +387,19 @@ def _general_out_of_scope_answer() -> str:
     )
 
 
+def _data_security_answer() -> str:
+    return (
+        "结论：身份证号、手机号、银行卡号、邮箱、客户名单、合同价格等敏感信息不能以原文直接进入知识库、日志或测试数据。\n\n"
+        "风险等级：高\n\n"
+        "处理建议：\n"
+        "1. 入库前先完成脱敏或匿名化，例如替换为 [身份证号已脱敏]、[手机号已脱敏] 等占位符。\n"
+        "2. 只保留合规判断所需的最小事实，例如员工身份类型、地区、时间节点和业务场景，不保留完整证件号。\n"
+        "3. 上传合同、工资单、客户名单等材料前，应由 HR/法务或管理员复核脱敏结果。\n"
+        "4. 若确需保留原始材料，应放在受控业务系统中，并按租户隔离、权限审批和审计日志管理。\n\n"
+        "待核验项：以企业数据安全制度、个人信息保护要求和当地监管口径为准。"
+    )
+
+
 def classify_question(question: str) -> QuestionGuardDecision:
     """Classify a question before expensive retrieval or model calls."""
     text = sanitize_text(question) or ""
@@ -374,6 +420,16 @@ def classify_question(question: str) -> QuestionGuardDecision:
             answer=_small_talk_answer(),
             risk_level="low",
             fallback_reason="system_role_intro",
+            suggestions=_default_suggestions(),
+        )
+
+    if is_data_security_question(text):
+        return QuestionGuardDecision(
+            category="data_security",
+            should_short_circuit=True,
+            answer=_data_security_answer(),
+            risk_level="high",
+            fallback_reason="sensitive_data_precheck",
             suggestions=_default_suggestions(),
         )
 

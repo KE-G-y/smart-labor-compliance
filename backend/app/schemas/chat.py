@@ -65,6 +65,7 @@ class ChatResponse(BaseModel):
     suggestions: List[str] = []
     disclaimer: Optional[str] = None
     evaluation: Optional[dict] = None
+    trace_metrics: Optional[dict] = Field(default=None, exclude=True)
 
 
 class HistoryItem(BaseModel):
